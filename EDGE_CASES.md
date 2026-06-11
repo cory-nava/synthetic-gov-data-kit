@@ -140,6 +140,41 @@ the income test is bypassed and the household is **eligible** for SNAP.
 
 ---
 
+### 7. Broad-based categorical eligibility (BBCE) — expanded gross income limit
+
+**CFR citation:** 7 CFR 273.2(j)(2)(ii)
+
+**Policy rule:** A state that has adopted BBCE confers categorical eligibility on households that
+receive a **non-cash TANF/MOE-funded benefit or service** (e.g. an informational brochure or
+referral). Adopting BBCE lets the state **raise the gross income limit from the federal 130% FPL up
+to the statutory ceiling of 200% FPL** (common values: 130, 165, 185, 200) and **eliminate or raise
+the asset test**. Crucially, BBCE raises the **gross** limit but does **not** waive the **net income
+test** — the household must still have net income ≤ 100% FPL to receive a benefit. The applicable
+gross limit is the **state's** BBCE percentage, not the federal 130%.
+
+**Expected outcome:** A household with gross income **between 130% FPL and the state's BBCE limit**
+that also has net income ≤ 100% FPL is **ELIGIBLE** — even though it would be **INELIGIBLE** under
+the federal gross test. A household with gross income **above** the state's BBCE limit is
+**INELIGIBLE**.
+
+**Why models fail:** Models apply the federal 130% FPL gross limit in a BBCE state and incorrectly
+reject a household that the state's higher limit would accept — or, conversely, assume BBCE waives
+the net income test and incorrectly accept a household whose net income exceeds 100% FPL.
+
+**Example:** A 3-person household in Virginia (BBCE at 200% FPL) earns $3,000/month gross — above the
+federal 130% limit of $2,888 but below Virginia's 200% limit of $4,442. After a $600/month
+dependent-care deduction its net income is below the $2,221 net limit. The household is **eligible**
+under BBCE. The same household earning $4,500/month gross would exceed Virginia's BBCE limit and be
+**ineligible**.
+
+**Data note:** Per-state BBCE parameters live in `data/thresholds/snap_bbce_fy2026.json` (sourced
+from the USDA FNS BBCE States Chart, August 2025). This case is generated via the dedicated
+`SNAPBBCESource` connector (`govsynth/sources/us/snap_bbce.py`), which derives each state's gross
+limit from the bundled FPL table. The base `SNAPSource` still uses an older hardcoded BBCE state list
+(asset-waiver only); reconciling the two is a tracked follow-up.
+
+---
+
 ## Group B — Planned (not yet implemented)
 
 ### 1. Fluctuating/irregular income
