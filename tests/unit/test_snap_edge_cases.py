@@ -84,6 +84,51 @@ def test_mixed_immigration_status_hh_size_reduction() -> None:
     assert "prorate" not in full_rationale or "income" not in full_rationale
 
 
+def test_bbce_expanded_gross_limit_invariants():
+    """BBCE expanded-income case: gross always above federal 130%; cites 273.2(j)(2)."""
+    gen = SNAPEligibilityGenerator(state="VA")  # VA is BBCE at 200% FPL
+    rng = random.Random(42)
+    case = gen._build_bbce_expanded_income_case(rng)
+
+    assert "bbce_expanded_gross_limit" in case.variation_tags
+    assert case.is_valid()
+    rules = " ".join(step.rule_applied for step in case.rationale_trace.steps)
+    assert "273.2(j)(2)" in rules
+    # The whole point: gross income sits above the federal 130% limit.
+    ctx = case.scenario.additional_context
+    assert case.scenario.monthly_gross_income > ctx["federal_130pct_limit"]
+    # Rationale must contrast the federal limit with the raised BBCE limit and note
+    # that the net income test still binds.
+    full = " ".join((s.computation or "") for s in case.rationale_trace.steps).lower()
+    assert "130%" in full and "bbce" in full
+    assert "net income test" in full
+
+
+def test_bbce_expanded_gross_limit_both_outcomes_reachable():
+    """Across seeds, the case produces both eligible (in-band) and ineligible (above-limit)."""
+    gen = SNAPEligibilityGenerator(state="CA")  # CA is BBCE at 200% FPL, assets waived
+    outcomes = set()
+    for s in range(60):
+        case = gen._build_bbce_expanded_income_case(random.Random(s))
+        outcomes.add(case.expected_outcome)
+        ctx = case.scenario.additional_context
+        if case.expected_outcome == "eligible":
+            # Eligible cases are within the BBCE limit and pass the net test.
+            assert case.scenario.monthly_gross_income <= ctx["bbce_gross_limit"]
+        else:
+            # The only way this case type is ineligible is exceeding the BBCE gross limit.
+            assert case.scenario.monthly_gross_income > ctx["bbce_gross_limit"]
+    assert outcomes == {"eligible", "ineligible"}
+
+
+def test_bbce_expanded_case_in_special_population_rotation():
+    """The 7th special-population type is generated when n >= 7."""
+    gen = SNAPEligibilityGenerator(state="VA")
+    cases = gen.generate(n=14, seed=42)
+    tags = [t for c in cases for t in c.variation_tags]
+    assert "bbce_expanded_gross_limit" in tags
+
+
 def test_categorical_eligibility_tanf_ssi() -> None:
     """TANF/SSI recipient is ELIGIBLE even if income exceeds normal limits."""
     gen = SNAPEligibilityGenerator(state="VA")

@@ -17,6 +17,7 @@ from govsynth.profiles.us_household import USHouseholdProfile
 from govsynth.reasoning.rules_engine import build_short_uid
 from govsynth.sources.base import HouseholdThreshold
 from govsynth.sources.us.snap import BBCE_STATES, SNAPSource, get_standard_deduction
+from govsynth.sources.us.snap_bbce import SNAPBBCESource
 
 # Threshold types used in edge-saturated generation
 _SNAP_THRESHOLD_TYPES = [
@@ -101,7 +102,9 @@ class SNAPEligibilityGenerator(Generator):
             cases: list[TestCase] = []
             for i in range(n):
                 case_seed = rng.randint(0, 2**31) if seed is not None else None
-                profile = USHouseholdProfile.random(state=self.state, seed=case_seed, strategy=profile_strategy)
+                profile = USHouseholdProfile.random(
+                    state=self.state, seed=case_seed, strategy=profile_strategy
+                )
                 try:
                     case = self._build_case(profile, case_seed, i)
                     cases.append(case)
@@ -111,7 +114,7 @@ class SNAPEligibilityGenerator(Generator):
 
         # edge_saturated: two-phase split
         n_special = max(0, min(int(n * 0.20), n))
-        n_special = max(n_special, min(6, n))  # guarantee >= 1 per type if n >= 6
+        n_special = max(n_special, min(7, n))  # guarantee >= 1 per type if n >= 7
         n_edge = n - n_special
 
         special_cases = self._build_special_population_cases(n_special, rng)
@@ -133,9 +136,9 @@ class SNAPEligibilityGenerator(Generator):
     # ------------------------------------------------------------------
 
     def _build_special_population_cases(self, n: int, rng: random.Random) -> list[TestCase]:
-        """Build n special-population edge cases, cycling through 6 types.
+        """Build n special-population edge cases, cycling through 7 types.
 
-        When n < 6, cycles through first n types. When n >= 6, guarantees at least
+        When n < 7, cycles through first n types. When n >= 7, guarantees at least
         one case per type.
         """
         builders = [
@@ -145,6 +148,7 @@ class SNAPEligibilityGenerator(Generator):
             self._build_migrant_case,
             self._build_mixed_immigration_case,
             self._build_categorical_eligibility_case,
+            self._build_bbce_expanded_income_case,
         ]
         cases: list[TestCase] = []
         for i in range(n):
@@ -700,7 +704,9 @@ class SNAPEligibilityGenerator(Generator):
         limits_reduced = t.by_household_size(eligible_count)
 
         # Income near the reduced-size limit to make the case interesting
-        gross = round(rng.uniform(limits_reduced.gross_monthly * 0.80, limits_reduced.gross_monthly * 1.15), 2)
+        gross = round(
+            rng.uniform(limits_reduced.gross_monthly * 0.80, limits_reduced.gross_monthly * 1.15), 2
+        )
 
         net_income = self.source.calculate_net_income(
             gross_income=gross,
@@ -958,6 +964,260 @@ class SNAPEligibilityGenerator(Generator):
                 "profile_strategy": "categorical_eligibility_tanf_ssi",
                 "state": self.state,
                 "fiscal_year": self.fiscal_year,
+            },
+        )
+
+    def _bbce_source_for_case(self) -> SNAPBBCESource:
+        """Return a BBCE source with a raised gross limit for case construction.
+
+        Uses the generator's own state only when it is BBCE with a limit above 130% FPL
+        AND the base SNAPSource model also classifies it as BBCE — so the expanded-income
+        case stays consistent with the rest of the batch. Otherwise falls back to a
+        representative 200%-FPL BBCE state (CA). (The base BBCE_STATES set and the BBCE
+        data table disagree for a few states, e.g. TX; this gate avoids a batch that mixes
+        the two classifications. See the BBCE design spec's "Known follow-ups".)
+        """
+        src = SNAPBBCESource(fiscal_year=self.fiscal_year, state=self.state)
+        if (
+            self.state in BBCE_STATES
+            and src.is_bbce
+            and src.bbce_params.gross_income_limit_pct_fpl > 130
+        ):
+            return src
+        return SNAPBBCESource(fiscal_year=self.fiscal_year, state="CA")
+
+    def _build_bbce_expanded_income_case(self, rng: random.Random) -> TestCase:
+        """Build a BBCE expanded-gross-limit case (7 CFR 273.2(j)(2)(ii)).
+
+        The headline reasoning test for BBCE: a household whose gross income falls
+        BETWEEN the federal 130% FPL limit and the state's higher BBCE limit. Such a
+        household is INELIGIBLE under federal rules but ELIGIBLE under BBCE. An
+        adversarial variant places gross income ABOVE the state BBCE limit (ineligible),
+        and the net income test still binds throughout.
+        """
+        src = self._bbce_source_for_case()
+        state = src.state
+        p = src.bbce_params
+        fy_config = src.fy_config
+        hh_size = rng.randint(1, 4)
+
+        federal_limit = src.federal_gross_limit(hh_size)
+        bbce_limit = src.effective_gross_limit(hh_size)
+        net_limit = src.thresholds().by_household_size(hh_size).net_monthly
+        pct = p.gross_income_limit_pct_fpl
+
+        # ~70% eligible in-band cases, ~30% adversarial above-limit cases.
+        adversarial = rng.random() >= 0.70
+
+        if adversarial:
+            # Gross above the state BBCE limit — ineligible on the gross test.
+            gross = round(bbce_limit * rng.uniform(1.03, 1.15), 2)
+            dependent_care = 0.0
+            net_income = src.calculate_net_income(
+                gross_income=gross, household_size=hh_size, earned_income=gross
+            )
+        else:
+            # Gross strictly between the federal 130% limit and the state BBCE limit.
+            gross = round(rng.uniform(federal_limit + 1.0, bbce_limit - 1.0), 2)
+            # Households above 130% FPL gross typically only qualify because high
+            # dependent-care/shelter costs pull net income under the 100% FPL limit.
+            net_before = src.calculate_net_income(
+                gross_income=gross, household_size=hh_size, earned_income=gross
+            )
+            target_net = round(net_limit * rng.uniform(0.85, 0.95), 2)
+            dependent_care = round(max(0.0, net_before - target_net), 2)
+            net_income = src.calculate_net_income(
+                gross_income=gross,
+                household_size=hh_size,
+                earned_income=gross,
+                dependent_care=dependent_care,
+            )
+
+        # Assets: waived states ignore; capped states stay within cap.
+        if p.asset_limit is None:
+            liquid_assets = round(rng.uniform(0, 8000), -2)
+        else:
+            liquid_assets = round(rng.uniform(0, p.asset_limit * 0.8), -2)
+
+        is_eligible, reason = src.is_eligible(
+            household_size=hh_size,
+            gross_income=gross,
+            net_income=net_income,
+            liquid_assets=liquid_assets,
+            has_elderly_or_disabled=False,
+        )
+        outcome = "eligible" if is_eligible else "ineligible"
+
+        uid = build_short_uid(rng)
+        case_id = (
+            f"snap.{state.lower()}.eligibility.bbce_expanded_gross_limit."
+            f"{outcome}.hh{hh_size}.{uid}"
+        )
+
+        asset_rule_text = (
+            "the asset test is waived"
+            if p.asset_limit is None
+            else f"a ${p.asset_limit:,.0f} BBCE asset cap applies"
+        )
+
+        steps = [
+            ReasoningStep(
+                step_number=1,
+                title="Establish broad-based categorical eligibility (7 CFR 273.2(j)(2)(ii))",
+                rule_applied="7 CFR 273.2(j)(2)(ii)",
+                inputs={
+                    "state": state,
+                    "bbce_gross_limit_pct_fpl": pct,
+                    "conferring_benefit": p.conferring_benefit,
+                },
+                computation=(
+                    f"{state} has adopted broad-based categorical eligibility (BBCE). The household "
+                    f"receives a non-cash TANF/MOE-funded benefit or service, conferring categorical "
+                    f"eligibility. Under BBCE, {state} raises the gross income limit to {pct}% FPL "
+                    f"(vs. the federal 130%), and {asset_rule_text}."
+                ),
+                result=f"BBCE applies — gross income limit raised to {pct}% FPL",
+                is_determinative=False,
+            ),
+            ReasoningStep(
+                step_number=2,
+                title="Apply the raised BBCE gross income limit",
+                rule_applied="7 CFR 273.2(j)(2)(ii)",
+                inputs={
+                    "gross_income": gross,
+                    "federal_130pct_limit": federal_limit,
+                    "bbce_limit": bbce_limit,
+                    "household_size": hh_size,
+                },
+                computation=(
+                    f"Federal 130% FPL limit: ${federal_limit:,.2f} — gross income ${gross:,.2f} "
+                    f"{'EXCEEDS' if gross > federal_limit else 'is within'} this, so the household "
+                    f"would be {'INELIGIBLE under federal rules' if gross > federal_limit else 'federally eligible'}. "
+                    f"BBCE {pct}% FPL limit: ${bbce_limit:,.2f} — gross income ${gross:,.2f} "
+                    f"{'<=' if gross <= bbce_limit else '>'} ${bbce_limit:,.2f}."
+                ),
+                result="PASS" if gross <= bbce_limit else "FAIL — exceeds BBCE gross limit",
+                is_determinative=gross > bbce_limit,
+                note=(
+                    "Common model error: applying the federal 130% limit in a BBCE state. The state's "
+                    "raised limit governs."
+                ),
+            ),
+            ReasoningStep(
+                step_number=3,
+                title="Apply the net income test (still binds under BBCE)",
+                rule_applied="7 CFR 273.9(a)(2)",
+                inputs={
+                    "net_income": round(net_income, 2),
+                    "net_limit": net_limit,
+                    "dependent_care_deduction": dependent_care,
+                },
+                computation=(
+                    f"BBCE raises the GROSS limit but does NOT waive the net income test. "
+                    f"After deductions (including ${dependent_care:,.2f} dependent care), net income "
+                    f"${net_income:,.2f} {'<=' if net_income <= net_limit else '>'} ${net_limit:,.2f} "
+                    f"(100% FPL, {hh_size}-person HH)."
+                ),
+                result="PASS" if net_income <= net_limit else "FAIL — exceeds net income limit",
+                is_determinative=(gross <= bbce_limit and net_income > net_limit),
+            ),
+            ReasoningStep(
+                step_number=4,
+                title="Apply the BBCE asset rule",
+                rule_applied="7 CFR 273.8",
+                inputs={"liquid_assets": liquid_assets, "asset_limit": p.asset_limit},
+                computation=(
+                    f"{state} BBCE: {asset_rule_text}. "
+                    + (
+                        "Assets are not tested."
+                        if p.asset_limit is None
+                        else f"Assets ${liquid_assets:,.2f} {'<=' if liquid_assets <= p.asset_limit else '>'} ${p.asset_limit:,.2f}."
+                    )
+                ),
+                result="WAIVED"
+                if p.asset_limit is None
+                else ("PASS" if liquid_assets <= p.asset_limit else "FAIL — exceeds asset cap"),
+                is_determinative=False,
+            ),
+        ]
+
+        return TestCase(
+            case_id=case_id,
+            program=Program.SNAP.value,
+            jurisdiction=f"us.{state.lower()}",
+            task_type=TaskType.ELIGIBILITY,
+            difficulty=Difficulty.HARD,
+            scenario=ScenarioBlock(
+                summary=(
+                    f"A {hh_size}-person household in {state} with ${gross:,.0f}/month gross income "
+                    f"(above the federal 130% FPL limit of ${federal_limit:,.0f}). {state} has adopted "
+                    f"broad-based categorical eligibility, raising the gross income limit to {pct}% FPL "
+                    f"(${bbce_limit:,.0f}). "
+                    + (
+                        f"The household pays ${dependent_care:,.0f}/month in dependent care."
+                        if dependent_care > 0
+                        else "The household has no dependent-care or shelter deductions."
+                    )
+                ),
+                household_size=hh_size,
+                monthly_gross_income=gross,
+                monthly_net_income=round(net_income, 2),
+                liquid_assets=liquid_assets,
+                state=state,
+                additional_context={
+                    "bbce_state": True,
+                    "bbce_gross_limit_pct_fpl": pct,
+                    "federal_130pct_limit": federal_limit,
+                    "bbce_gross_limit": bbce_limit,
+                    "dependent_care": dependent_care,
+                    "threshold_type": "bbce_expanded_gross_limit",
+                },
+            ),
+            task=TaskBlock(instruction=_TASK_INSTRUCTION),
+            expected_outcome=outcome,
+            expected_answer=(
+                f"This household is {'ELIGIBLE' if is_eligible else 'INELIGIBLE'} for SNAP. "
+                f"{state} has adopted broad-based categorical eligibility (7 CFR 273.2(j)(2)(ii)), "
+                f"raising the gross income limit from the federal 130% FPL (${federal_limit:,.2f}) to "
+                f"{pct}% FPL (${bbce_limit:,.2f}). Gross income ${gross:,.2f} "
+                + (
+                    f"is within the BBCE limit, and net income ${net_income:,.2f} is within the "
+                    f"${net_limit:,.2f} net limit (the net income test still applies under BBCE)."
+                    if is_eligible
+                    else f"exceeds the {pct}% FPL BBCE limit of ${bbce_limit:,.2f}."
+                )
+            ),
+            rationale_trace=RationaleTrace(
+                steps=steps,
+                conclusion=f"{'ELIGIBLE' if is_eligible else 'INELIGIBLE'}. {reason}",
+                policy_basis=[
+                    PolicyCitation(
+                        document="7 CFR Part 273",
+                        section="7 CFR 273.2(j)(2)(ii)",
+                        year=self.fiscal_year,
+                        url="https://www.ecfr.gov/current/title-7/part-273",
+                    ),
+                    PolicyCitation(
+                        document="USDA FNS SNAP Broad-Based Categorical Eligibility States Chart",
+                        section="State BBCE options (August 2025)",
+                        year=self.fiscal_year,
+                        url="https://www.fns.usda.gov/snap/broad-based-categorical-eligibility",
+                    ),
+                ],
+            ),
+            variation_tags=["bbce_expanded_gross_limit", "bbce_state"],
+            source_citations=[
+                "7 CFR Part 273 (2025)",
+                "USDA FNS SNAP BBCE States Chart (August 2025)",
+                f"USDA FNS SNAP Income and Resource Limits {fy_config.period_label}",
+            ],
+            seed=None,
+            metadata={
+                "generator": "SNAPEligibilityGenerator",
+                "profile_strategy": "bbce_expanded_gross_limit",
+                "state": state,
+                "fiscal_year": self.fiscal_year,
+                "bbce_gross_limit_pct_fpl": pct,
             },
         )
 
