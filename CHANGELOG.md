@@ -10,6 +10,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- `SNAPBBCESource` (`govsynth/sources/us/snap_bbce.py`) — faithful Broad-Based Categorical Eligibility model: per-state gross income limit (130–200% FPL, derived from the FPL table), waived/capped asset rule, with the net income test still enforced (7 CFR 273.2(j)(2)(ii))
+- `data/thresholds/snap_bbce_fy2026.json` — per-state BBCE parameters for all 50 states + DC + GU/VI, sourced from the USDA FNS BBCE States Chart (August 2025), cross-checked against CBPP, with per-row verification status
+- Seventh SNAP edge case — `bbce_expanded_gross_limit`: a household at 130–200% FPL gross that is eligible under BBCE but ineligible federally (plus an adversarial above-limit variant)
+- `bbce_states(fiscal_year)` helper and data-backed `BBCE_STATES` constant exported from `snap_bbce`
 - `docs/claude-code-integration.md` — examples of using govsynth within Claude Code agentic workflows
 - `docs/cli-integration.md` — guide to adding govsynth CLI access to Claude Code and other AI apps
 - `docs/open-source-health.md` — open source checklist and project health reference
@@ -29,7 +33,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Special population fields on `USHouseholdProfile`: `is_homeless`, `student_status`, `is_boarder`, `is_migrant_worker`, `has_ineligible_members`, `ineligible_member_count`
 - `is_homeless` parameter on `SNAPSource.calculate_net_income()` for homeless shelter deduction
 
+### Changed
+- `SNAPSource` reduced to the federal baseline (130% FPL gross, 100% FPL net, $3,000/$4,500 assets). The stale hardcoded `BBCE_STATES`/`STRICT_ASSET_TEST_STATES` sets were removed; BBCE is now modeled exclusively by `SNAPBBCESource`, which the SNAP generator uses for the main threshold path and the BBCE edge case. **Behavior change:** SNAP cases for BBCE states now apply the state's raised gross limit and correct asset rule (e.g. TX is now correctly BBCE at 165% FPL / $5,000 cap rather than federal strict).
+
 ### Fixed
+- Corrected stale BBCE state classification: TN/UT/WY are not BBCE; TX/VA are (per FNS Aug 2025)
 - `LICENSE` — added full MIT license text with copyright year and holder
 - `pyproject.toml` — replaced `your-org` placeholder URLs with actual repository paths
 - `CONTRIBUTING.md` — corrected clone URL placeholder

@@ -331,18 +331,22 @@ def _build_snap_threshold_profile(
     rng: random.Random,
 ) -> USHouseholdProfile:
     """Build a SNAP-specific threshold profile."""
-    from govsynth.sources.us.snap import SNAPSource, get_standard_deduction
+    from govsynth.sources.us.snap import get_standard_deduction
+    from govsynth.sources.us.snap_bbce import SNAPBBCESource
 
-    source = SNAPSource(fiscal_year=fiscal_year, state=state)
+    # Use the BBCE-aware source so income/asset boundaries reflect the state's actual
+    # rules (raised gross limit, waived or capped assets), not just the federal baseline.
+    source = SNAPBBCESource(fiscal_year=fiscal_year, state=state)
     t = source.thresholds()
     limits = t.by_household_size(min(household_size, 8))
+    gross_limit = source.effective_gross_limit(household_size)
 
     has_elderly = False
     gross_income: float
     assets: float = rng.uniform(500, 1500)
 
     if threshold == "gross_income_limit":
-        gross_income = round(limits.gross_monthly * (1 + offset_pct), 2)
+        gross_income = round(gross_limit * (1 + offset_pct), 2)
         assets = round(t.asset_limit_general * 0.5, 0) if t.asset_limit_general else 500.0
 
     elif threshold == "net_income_limit":
