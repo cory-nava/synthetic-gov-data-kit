@@ -30,7 +30,7 @@ from functools import lru_cache
 from typing import Any
 
 from govsynth.fiscal_year import DEFAULT_SNAP_FY
-from govsynth.sources.base import THRESHOLD_DIR, _load_json_file
+from govsynth.sources.base import THRESHOLD_DIR, ProgramThresholds, _load_json_file
 from govsynth.sources.us.snap import SNAPSource, _region_for_state
 
 # Maps the SNAP region key (from snap._region_for_state) to the FPL file region key.
@@ -100,6 +100,20 @@ def _params_from_row(state: str, row: dict[str, Any]) -> BBCEParams:
     )
 
 
+def bbce_states(fiscal_year: int = DEFAULT_SNAP_FY) -> frozenset[str]:
+    """Return the set of jurisdictions that have adopted BBCE for a fiscal year.
+
+    Derived from the versioned BBCE data table, so membership stays correct and
+    single-sourced (unlike the former hardcoded list).
+    """
+    table = _load_bbce_table(fiscal_year)
+    return frozenset(code for code, row in table["states"].items() if row.get("bbce"))
+
+
+# Backward-compatible module constant (FY2026). Prefer bbce_states(fy) in new code.
+BBCE_STATES: frozenset[str] = bbce_states()
+
+
 class SNAPBBCESource(SNAPSource):
     """SNAP eligibility WITH Broad-Based Categorical Eligibility applied.
 
@@ -107,13 +121,31 @@ class SNAPBBCESource(SNAPSource):
         fiscal_year: Federal fiscal year (Oct 1 - Sep 30). Default FY2026.
         state: Two-letter state code or 'national'. Drives the BBCE rules applied.
 
-    For a non-BBCE state (or 'national'), this source behaves like the federal rules
-    and ``is_eligible`` defers to :class:`SNAPSource`.
+    For a non-BBCE state (or 'national'), the effective gross limit equals the federal
+    130% FPL limit and the federal asset limits apply, so this source behaves like the
+    federal baseline while remaining authoritative from the BBCE data table.
     """
 
     def __init__(self, fiscal_year: int = DEFAULT_SNAP_FY, state: str = "national") -> None:
         super().__init__(fiscal_year=fiscal_year, state=state)
         self._bbce_params = self._resolve_bbce_params()
+
+    def fetch_thresholds(self) -> ProgramThresholds:
+        """Federal threshold table with the state's BBCE asset rule layered in.
+
+        The gross income table stays at the federal 130% values (the raised BBCE limit
+        is exposed via :meth:`effective_gross_limit`); ``asset_limit_general`` is set to
+        the BBCE asset rule (None when waived, or the state cap), and BBCE flags are
+        added to ``extra`` so downstream consumers see consistent values.
+        """
+        t = super().fetch_thresholds()
+        p = self._bbce_params
+        t.asset_limit_general = p.asset_limit
+        extra = dict(t.extra or {})
+        extra["bbce_state"] = p.bbce
+        extra["bbce_gross_limit_pct_fpl"] = p.gross_income_limit_pct_fpl
+        t.extra = extra
+        return t
 
     # ------------------------------------------------------------------
     # BBCE parameter access

@@ -17,64 +17,11 @@ from functools import lru_cache
 from govsynth.fiscal_year import DEFAULT_SNAP_FY, FiscalYearConfig
 from govsynth.sources.base import DataSource, HouseholdThreshold, ProgramThresholds
 
-# States with broad-based categorical eligibility (BBCE) — no/relaxed asset test.
-# Source: USDA FNS State Options Report, FY2025 (updated periodically)
-BBCE_STATES: set[str] = {
-    "AK",
-    "CA",
-    "CO",
-    "CT",
-    "DC",
-    "DE",
-    "FL",
-    "GA",
-    "HI",
-    "IL",
-    "IN",
-    "KY",
-    "LA",
-    "ME",
-    "MD",
-    "MA",
-    "MI",
-    "MN",
-    "MT",
-    "NE",
-    "NV",
-    "NH",
-    "NJ",
-    "NM",
-    "NY",
-    "NC",
-    "ND",
-    "OH",
-    "OR",
-    "PA",
-    "RI",
-    "SC",
-    "TN",
-    "UT",
-    "VT",
-    "VA",
-    "WA",
-    "WI",
-    "WY",
-}
-
-# States that maintain the strict federal asset test
-STRICT_ASSET_TEST_STATES: set[str] = {
-    "TX",
-    "MO",
-    "SD",
-    "WV",
-    "KS",
-    "AZ",
-    "MS",
-    "AL",
-    "AR",
-    "ID",
-    "OK",
-}
+# Broad-based categorical eligibility (BBCE) is modeled by SNAPBBCESource
+# (govsynth/sources/us/snap_bbce.py), driven by the per-state data table in
+# data/thresholds/snap_bbce_*.json. SNAPSource itself models only the federal
+# baseline (130% FPL gross, 100% FPL net, $3,000/$4,500 asset limits). A derived,
+# data-backed `BBCE_STATES` set is available from snap_bbce for callers that need it.
 
 # Alaska regions for allotment purposes
 ALASKA_RURAL1 = {
@@ -152,16 +99,15 @@ class SNAPSource(DataSource):
                 max_benefit=float(max_b),
             )
 
-        # Asset limits — may be waived for BBCE states
-        if self.state != "national" and self.state in BBCE_STATES:
-            asset_limit: float | None = None  # BBCE waives the asset test
-        else:
-            asset_limit = float(raw["asset_limit_general"])
+        # Federal baseline asset limit. BBCE waivers/caps are applied by SNAPBBCESource.
+        asset_limit: float | None = float(raw["asset_limit_general"])
 
         std_deductions = {size: get_standard_deduction(size, self._region) for size in range(1, 9)}
 
         shelter_key = f"excess_shelter_deduction_cap_{self._region}"
-        shelter_cap = float(raw.get(shelter_key, raw.get("excess_shelter_deduction_cap_48_states_dc", 744)))
+        shelter_cap = float(
+            raw.get(shelter_key, raw.get("excess_shelter_deduction_cap_48_states_dc", 744))
+        )
 
         return ProgramThresholds(
             program="snap",
@@ -175,8 +121,6 @@ class SNAPSource(DataSource):
             earned_income_deduction_pct=float(raw["earned_income_deduction_pct"]),
             standard_deductions=std_deductions,
             extra={
-                "bbce_state": self.state in BBCE_STATES,
-                "strict_asset_test": self.state in STRICT_ASSET_TEST_STATES,
                 "excess_shelter_cap": shelter_cap,
                 "homeless_shelter_deduction": float(raw["homeless_shelter_deduction"]),
                 "minimum_benefit": float(raw.get("minimum_benefit_48_states_dc", 24)),
@@ -189,11 +133,8 @@ class SNAPSource(DataSource):
     def fetch_policy_summary(self) -> str:
         t = self.thresholds()
         assert t.extra is not None, "SNAP thresholds always populate `extra`"
-        bbce = t.extra and t.extra.get("bbce_state", False)
         asset_note = (
-            f"No asset test ({self.state} has broad-based categorical eligibility)."
-            if bbce
-            else f"Asset limits: ${t.asset_limit_general:,.0f} general, "
+            f"Asset limits: ${t.asset_limit_general:,.0f} general, "
             f"${t.asset_limit_elderly_disabled:,.0f} elderly/disabled (60+ or disabled)."
         )
         return (
@@ -253,7 +194,9 @@ class SNAPSource(DataSource):
                 shelter_cap = float(t.extra["excess_shelter_cap"]) if t.extra else 744.0
                 half_income = max(0.0, after_medical) * 0.5
                 raw_excess = max(0.0, shelter_costs - half_income)
-                shelter_ded = raw_excess if has_elderly_or_disabled else min(raw_excess, shelter_cap)
+                shelter_ded = (
+                    raw_excess if has_elderly_or_disabled else min(raw_excess, shelter_cap)
+                )
 
         return max(0.0, after_medical - shelter_ded)
 

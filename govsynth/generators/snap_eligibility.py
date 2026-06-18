@@ -16,7 +16,7 @@ from govsynth.models.test_case import ScenarioBlock, TaskBlock, TestCase
 from govsynth.profiles.us_household import USHouseholdProfile
 from govsynth.reasoning.rules_engine import build_short_uid
 from govsynth.sources.base import HouseholdThreshold
-from govsynth.sources.us.snap import BBCE_STATES, SNAPSource, get_standard_deduction
+from govsynth.sources.us.snap import SNAPSource, get_standard_deduction
 from govsynth.sources.us.snap_bbce import SNAPBBCESource
 
 # Threshold types used in edge-saturated generation
@@ -63,7 +63,11 @@ class SNAPEligibilityGenerator(Generator):
     ) -> None:
         self.fiscal_year = fiscal_year
         self.state = state.upper()
+        # Federal baseline, used by the special-population builders (which are framed
+        # around federal rules). The main threshold path and the BBCE builder use the
+        # BBCE-aware source so per-state gross/asset rules apply.
         self.source = SNAPSource(fiscal_year=fiscal_year, state=state)
+        self.bbce_source = SNAPBBCESource(fiscal_year=fiscal_year, state=state)
         self.difficulty_distribution = difficulty_distribution or {
             "easy": 0.15,
             "medium": 0.30,
@@ -970,20 +974,15 @@ class SNAPEligibilityGenerator(Generator):
     def _bbce_source_for_case(self) -> SNAPBBCESource:
         """Return a BBCE source with a raised gross limit for case construction.
 
-        Uses the generator's own state only when it is BBCE with a limit above 130% FPL
-        AND the base SNAPSource model also classifies it as BBCE — so the expanded-income
-        case stays consistent with the rest of the batch. Otherwise falls back to a
-        representative 200%-FPL BBCE state (CA). (The base BBCE_STATES set and the BBCE
-        data table disagree for a few states, e.g. TX; this gate avoids a batch that mixes
-        the two classifications. See the BBCE design spec's "Known follow-ups".)
+        Uses the generator's own state when it is BBCE with a limit above 130% FPL;
+        otherwise falls back to a representative 200%-FPL BBCE state (CA) so the
+        expanded-income case is always meaningful.
         """
-        src = SNAPBBCESource(fiscal_year=self.fiscal_year, state=self.state)
         if (
-            self.state in BBCE_STATES
-            and src.is_bbce
-            and src.bbce_params.gross_income_limit_pct_fpl > 130
+            self.bbce_source.is_bbce
+            and self.bbce_source.bbce_params.gross_income_limit_pct_fpl > 130
         ):
-            return src
+            return self.bbce_source
         return SNAPBBCESource(fiscal_year=self.fiscal_year, state="CA")
 
     def _build_bbce_expanded_income_case(self, rng: random.Random) -> TestCase:
@@ -1224,10 +1223,15 @@ class SNAPEligibilityGenerator(Generator):
     def _sample_edge_profile(self, rng: random.Random, seed: int | None) -> USHouseholdProfile:
         """Sample a profile using edge-saturated strategy."""
         hh_size = rng.choices([1, 2, 3, 4, 5, 6], weights=[0.15, 0.25, 0.25, 0.20, 0.10, 0.05])[0]
-        # Asset-limit thresholds are irrelevant for BBCE states (asset test waived)
+        # Asset-limit thresholds are irrelevant when the asset test is waived (BBCE states
+        # with no asset cap). BBCE states that keep a dollar cap still have a meaningful
+        # asset boundary, so retain asset thresholds for them.
+        asset_test_waived = (
+            self.bbce_source.is_bbce and self.bbce_source.bbce_params.asset_limit is None
+        )
         available_thresholds = (
             [t for t in _SNAP_THRESHOLD_TYPES if "asset" not in t]
-            if self.state in BBCE_STATES
+            if asset_test_waived
             else _SNAP_THRESHOLD_TYPES
         )
         threshold = rng.choice(available_thresholds)
@@ -1245,14 +1249,14 @@ class SNAPEligibilityGenerator(Generator):
 
     def _build_case(self, profile: USHouseholdProfile, seed: int | None, index: int) -> TestCase:
         """Build a complete TestCase from a profile."""
-        t = self.source.thresholds()
-        fy_config = self.source.fy_config
+        t = self.bbce_source.thresholds()
+        fy_config = self.bbce_source.fy_config
         limits = t.by_household_size(min(profile.household_size, 8))
 
         # Compute net income if not already set
         net_income = profile.monthly_net_income
         if net_income is None:
-            net_income = self.source.calculate_net_income(
+            net_income = self.bbce_source.calculate_net_income(
                 gross_income=profile.monthly_gross_income,
                 household_size=profile.household_size,
                 earned_income=profile.earned_income,
@@ -1262,7 +1266,7 @@ class SNAPEligibilityGenerator(Generator):
             profile.monthly_net_income = round(net_income, 2)
 
         # Determine eligibility
-        is_eligible, reason = self.source.is_eligible(
+        is_eligible, reason = self.bbce_source.is_eligible(
             household_size=profile.household_size,
             gross_income=profile.monthly_gross_income,
             net_income=net_income,
@@ -1324,14 +1328,17 @@ class SNAPEligibilityGenerator(Generator):
         """Construct the step-by-step reasoning chain for SNAP eligibility."""
         steps: list[ReasoningStep] = []
         std_ded = get_standard_deduction(profile.household_size)
-        t = self.source.thresholds()
-        bbce = self.state in BBCE_STATES
+        t = self.bbce_source.thresholds()
+        bbce = self.bbce_source.is_bbce
+        gross_pct = self.bbce_source.bbce_params.gross_income_limit_pct_fpl
+        gross_limit = self.bbce_source.effective_gross_limit(profile.household_size)
+        gross_basis = f"{gross_pct}% FPL BBCE limit, {self.state}" if bbce else "130% FPL"
 
         step_n = 1
 
         # Step 1: Gross income test (skip for elderly/disabled)
         if not profile.has_elderly_or_disabled:
-            gross_pass = profile.monthly_gross_income <= limits.gross_monthly
+            gross_pass = profile.monthly_gross_income <= gross_limit
             steps.append(
                 ReasoningStep(
                     step_number=step_n,
@@ -1340,20 +1347,23 @@ class SNAPEligibilityGenerator(Generator):
                     inputs={
                         "household_size": profile.household_size,
                         "gross_income": profile.monthly_gross_income,
-                        "gross_limit": limits.gross_monthly,
-                        "pct_fpl": "130%",
+                        "gross_limit": gross_limit,
+                        "pct_fpl": f"{gross_pct}%",
                         "period": fy_config.period_label,
                     },
                     computation=(
                         f"${profile.monthly_gross_income:,.2f} "
                         f"{'<=' if gross_pass else '>'} "
-                        f"${limits.gross_monthly:,.2f} "
-                        f"(130% FPL for {profile.household_size}-person HH, {fy_config.period_label})"
+                        f"${gross_limit:,.2f} "
+                        f"({gross_basis} for {profile.household_size}-person HH, {fy_config.period_label})"
                     ),
                     result="PASS" if gross_pass else "FAIL — exceeds gross income limit",
                     is_determinative=not gross_pass,
-                    note="Elderly/disabled households are exempt from the gross income test (7 CFR 273.9(a)(1))."
-                    if profile.has_elderly_or_disabled
+                    note=(
+                        f"{self.state} has adopted broad-based categorical eligibility, raising the "
+                        f"gross income limit to {gross_pct}% FPL (vs. the federal 130%)."
+                    )
+                    if bbce and gross_pct > 130
                     else None,
                 )
             )
@@ -1367,7 +1377,7 @@ class SNAPEligibilityGenerator(Generator):
                         inputs={},
                         computation=(
                             f"Gross income test failed — net income and asset tests are not reached. "
-                            f"${profile.monthly_gross_income:,.2f} > ${limits.gross_monthly:,.2f} (130% FPL)."
+                            f"${profile.monthly_gross_income:,.2f} > ${gross_limit:,.2f} ({gross_basis})."
                         ),
                         result="INELIGIBLE",
                         is_determinative=True,
@@ -1376,7 +1386,7 @@ class SNAPEligibilityGenerator(Generator):
                 return RationaleTrace(
                     steps=steps,
                     conclusion=f"INELIGIBLE. Gross income ${profile.monthly_gross_income:,.2f} exceeds "
-                    f"the ${limits.gross_monthly:,.2f} limit (130% FPL, {fy_config.period_label}).",
+                    f"the ${gross_limit:,.2f} limit ({gross_basis}, {fy_config.period_label}).",
                     policy_basis=[
                         PolicyCitation(
                             document="7 CFR Part 273",
@@ -1470,8 +1480,13 @@ class SNAPEligibilityGenerator(Generator):
                 ],
             )
 
-        # Step 5: Asset test
-        if bbce:
+        # Step 5: Asset test — waived (BBCE), a BBCE cap, or the federal limit.
+        asset_limit_val = (
+            t.asset_limit_elderly_disabled
+            if (profile.has_elderly_or_disabled and not bbce)
+            else t.asset_limit_general
+        )
+        if asset_limit_val is None:
             steps.append(
                 ReasoningStep(
                     step_number=step_n,
@@ -1485,22 +1500,28 @@ class SNAPEligibilityGenerator(Generator):
                 )
             )
         else:
-            asset_limit = (
-                t.asset_limit_elderly_disabled if profile.has_elderly_or_disabled else t.asset_limit_general
-            ) or 2500.0
-            asset_pass = profile.liquid_assets <= asset_limit
+            asset_pass = profile.liquid_assets <= asset_limit_val
+            cap_kind = "BBCE asset cap" if bbce else "asset limit"
             steps.append(
                 ReasoningStep(
                     step_number=step_n,
-                    title="Check asset limit",
-                    rule_applied="7 CFR 273.8(b)(1)" if not profile.has_elderly_or_disabled else "7 CFR 273.8(b)(2)",
+                    title=f"Check {cap_kind}",
+                    rule_applied="7 CFR 273.8(b)(1)"
+                    if not profile.has_elderly_or_disabled
+                    else "7 CFR 273.8(b)(2)",
                     inputs={
                         "liquid_assets": profile.liquid_assets,
-                        "asset_limit": asset_limit,
+                        "asset_limit": asset_limit_val,
                         "elderly_disabled": profile.has_elderly_or_disabled,
+                        "bbce_cap": bbce,
                     },
-                    computation=(f"${profile.liquid_assets:,.2f} {'<=' if asset_pass else '>'} ${asset_limit:,.2f}"),
-                    result="PASS" if asset_pass else "FAIL — exceeds asset limit",
+                    computation=(
+                        f"${profile.liquid_assets:,.2f} "
+                        f"{'<=' if asset_pass else '>'} "
+                        f"${asset_limit_val:,.2f}"
+                        + (f" ({self.state} BBCE asset cap)" if bbce else "")
+                    ),
+                    result="PASS" if asset_pass else f"FAIL — exceeds {cap_kind}",
                     is_determinative=not asset_pass,
                 )
             )
@@ -1508,7 +1529,7 @@ class SNAPEligibilityGenerator(Generator):
                 return RationaleTrace(
                     steps=steps,
                     conclusion=f"INELIGIBLE. Assets ${profile.liquid_assets:,.2f} exceed "
-                    f"the ${asset_limit:,.2f} limit.",
+                    f"the ${asset_limit_val:,.2f} {cap_kind}.",
                     policy_basis=[
                         PolicyCitation(
                             document="7 CFR Part 273",
@@ -1523,11 +1544,11 @@ class SNAPEligibilityGenerator(Generator):
         gross_note = (
             "gross income (waived for elderly/disabled), " if profile.has_elderly_or_disabled else "gross income, "
         )
-        asset_note = (
-            "assets (BBCE — waived)."
-            if bbce
-            else f"assets (${profile.liquid_assets:,.2f} ≤ ${(t.asset_limit_general or 0):,.2f})."
-        )
+        if asset_limit_val is None:
+            asset_note = "assets (BBCE — waived)."
+        else:
+            cap_kind = "BBCE cap" if bbce else "limit"
+            asset_note = f"assets (${profile.liquid_assets:,.2f} ≤ ${asset_limit_val:,.2f} {cap_kind})."
         return RationaleTrace(
             steps=steps,
             conclusion=(
@@ -1561,24 +1582,27 @@ class SNAPEligibilityGenerator(Generator):
         reason: str,
         fy_config: FiscalYearConfig,
     ) -> str:
-        t = self.source.thresholds()
+        t = self.bbce_source.thresholds()
         std_ded = get_standard_deduction(profile.household_size)
         earned = profile.earned_income or profile.monthly_gross_income
         earned_ded = earned * 0.20
+        gross_pct = self.bbce_source.bbce_params.gross_income_limit_pct_fpl
+        gross_limit = self.bbce_source.effective_gross_limit(profile.household_size)
 
         if is_eligible:
             benefit = limits.max_benefit or 0.0
-            gross_result = (
-                "(waived — elderly/disabled household)"
-                if profile.has_elderly_or_disabled
-                else f"≤ ${limits.gross_monthly:,.2f} — PASS"
+            asset_str = (
+                "N/A (BBCE — waived)"
+                if t.asset_limit_general is None
+                else f"${t.asset_limit_general:,.0f}"
             )
             return (
                 f"This household is ELIGIBLE for SNAP benefits ({fy_config.period_label}).\n\n"
-                f"Gross income test: ${profile.monthly_gross_income:,.2f} {gross_result}.\n"
+                f"Gross income test: ${profile.monthly_gross_income:,.2f} "
+                f"{'(waived — elderly/disabled household)' if profile.has_elderly_or_disabled else f'≤ ${gross_limit:,.2f} ({gross_pct}% FPL) — PASS'}.\n"
                 f"Net income: ${profile.monthly_gross_income:,.2f} − ${earned_ded:,.2f} (20% earned deduction) − "
                 f"${std_ded:,.0f} (standard deduction) = ${net_income:,.2f} ≤ ${limits.net_monthly:,.2f} — PASS.\n"
-                f"Assets: ${profile.liquid_assets:,.2f} ≤ ${t.asset_limit_general or 'N/A (BBCE)'} — PASS.\n\n"
+                f"Assets: ${profile.liquid_assets:,.2f} ≤ {asset_str} — PASS.\n\n"
                 f"Estimated monthly benefit: approximately ${benefit:,.0f} "
                 f"(maximum for {profile.household_size}-person household, subject to net income calculation)."
             )
@@ -1588,7 +1612,7 @@ class SNAPEligibilityGenerator(Generator):
                 f"This household is INELIGIBLE for SNAP benefits ({fy_config.period_label}).\n\n"
                 f"Reason: {reason}\n\n"
                 f"Applicable limits for a {profile.household_size}-person household: "
-                f"Gross ${limits.gross_monthly:,.2f}/month (130% FPL), "
+                f"Gross ${gross_limit:,.2f}/month ({gross_pct}% FPL), "
                 f"Net ${limits.net_monthly:,.2f}/month (100% FPL), "
                 f"Assets {asset_result} (general)."
             )
@@ -1599,7 +1623,7 @@ class SNAPEligibilityGenerator(Generator):
 
         if abs(offset) <= 0.01 and threshold_type:
             return Difficulty.HARD
-        elif profile.has_elderly_or_disabled or self.state in BBCE_STATES:
+        elif profile.has_elderly_or_disabled or self.bbce_source.is_bbce:
             return Difficulty.MEDIUM
         elif abs(offset) > 0.30:
             return Difficulty.EASY
@@ -1636,9 +1660,12 @@ class SNAPEligibilityGenerator(Generator):
         if profile.has_elderly_or_disabled:
             tags.append("elderly_or_disabled")
             tags.append("gross_income_test_waived")
-        if self.state in BBCE_STATES:
+        if self.bbce_source.is_bbce:
             tags.append("bbce_state")
-            tags.append("asset_test_waived")
+            if self.bbce_source.bbce_params.asset_limit is None:
+                tags.append("asset_test_waived")
+            else:
+                tags.append("asset_cap")
         if profile.household_size == 1:
             tags.append("single_person_household")
         elif profile.has_dependent_children:

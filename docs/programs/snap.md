@@ -45,14 +45,14 @@ Net income = Gross income
 
 ## Presets
 
-| Preset | State | Asset Test | Notes |
-|---|---|---|---|
-| `snap.va` | Virginia | Strict ($2,500) | Default for most examples |
-| `snap.ca` | California | Waived (BBCE) | No asset test |
-| `snap.tx` | Texas | Strict ($3,000)* | *Preset uses federal strict model; TX is actually BBCE (165% FPL, $5,000 cap) per FNS Aug 2025 |
-| `snap.md` | Maryland | Waived (BBCE) | |
+| Preset | State | Gross limit | Asset Test | Notes |
+|---|---|---|---|---|
+| `snap.va` | Virginia | 200% FPL (BBCE) | Waived (BBCE) | Default for most examples |
+| `snap.ca` | California | 200% FPL (BBCE) | Waived (BBCE) | |
+| `snap.tx` | Texas | 165% FPL (BBCE) | $5,000 cap (BBCE) | Demonstrates a BBCE state with a dollar asset cap |
+| `snap.md` | Maryland | 200% FPL (BBCE) | Waived (BBCE) | |
 
-Per-state BBCE parameters (gross income limit, asset rule, conferring benefit) are tracked in `data/thresholds/snap_bbce_fy2026.json` and consumed by `govsynth/sources/us/snap_bbce.py::SNAPBBCESource`. The legacy `govsynth/sources/us/snap.py::BBCE_STATES` set (asset-waiver only) is retained for backward compatibility and is **stale** for TX/TN/UT/WY — reconciling it with the data table is a tracked follow-up. Per the FNS BBCE States Chart (Aug 2025), `snap.tx` is actually a BBCE state (165% FPL, $5,000 asset cap), though the `snap.tx` preset still uses the federal strict-asset model.
+Per-state BBCE parameters (gross income limit, asset rule, conferring benefit) are tracked in `data/thresholds/snap_bbce_fy2026.json` and applied by `govsynth/sources/us/snap_bbce.py::SNAPBBCESource`, which the SNAP generator uses for the main threshold path and the BBCE edge case. `SNAPSource` models only the federal baseline (130% FPL gross, $3,000/$4,500 assets). A data-backed `BBCE_STATES` set (and `bbce_states(fiscal_year)`) is exported from `snap_bbce` for callers that need the current membership.
 
 ---
 

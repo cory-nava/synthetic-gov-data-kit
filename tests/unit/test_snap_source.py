@@ -3,9 +3,10 @@
 All dollar values come directly from the verified
 USDA FNS SNAP COLA FY2026 memo (August 13, 2025).
 
-NOTE: Virginia (VA) is a BBCE state — asset test is waived.
-      Texas (TX) is a strict-asset-test state — $3,000 limit applies.
-      Tests that check asset limits use TX.
+NOTE: SNAPSource models only the FEDERAL baseline (130% FPL gross, 100% FPL net,
+      $3,000/$4,500 asset limits) regardless of state. Broad-based categorical
+      eligibility (raised gross limit, waived/capped assets) is modeled separately
+      by SNAPBBCESource — see test_snap_bbce_source.py.
 """
 
 import pytest
@@ -40,15 +41,21 @@ class TestSNAPVerifiedThresholds:
         for size, expected_benefit in expected.items():
             assert va_source.thresholds().by_household_size(size).max_benefit == expected_benefit
 
-    def test_asset_limit_bbce_state_is_none(self, va_source: SNAPSource) -> None:
-        """VA has BBCE — asset test is waived, limit should be None."""
-        assert va_source.thresholds().asset_limit_general is None
-        assert va_source.thresholds().extra["bbce_state"] is True
+    def test_asset_limit_federal_baseline_all_states(
+        self, va_source: SNAPSource, tx_source: SNAPSource
+    ) -> None:
+        """SNAPSource applies the federal $3,000 general asset limit regardless of state.
 
-    def test_asset_limit_strict_state(self, tx_source: SNAPSource) -> None:
-        """TX has strict asset test — $3,000 general limit."""
+        BBCE waivers/caps are layered on by SNAPBBCESource, not SNAPSource.
+        """
+        assert va_source.thresholds().asset_limit_general == 3000
         assert tx_source.thresholds().asset_limit_general == 3000
-        assert tx_source.thresholds().extra["bbce_state"] is False
+
+    def test_no_bbce_flags_in_federal_source(self, va_source):
+        """SNAPSource no longer carries BBCE classification in extra."""
+        extra = va_source.thresholds().extra
+        assert "bbce_state" not in extra
+        assert "strict_asset_test" not in extra
 
     def test_asset_limit_elderly_disabled(self, va_source: SNAPSource) -> None:
         assert va_source.thresholds().asset_limit_elderly_disabled == 4500
@@ -83,7 +90,9 @@ class TestNetIncomeCalculation:
     def test_basic_all_earned(self, va_source: SNAPSource) -> None:
         # $2,000 gross, all earned, HH3
         # 20% ded = $400 → $1,600; std ded $209 → $1,391
-        net = va_source.calculate_net_income(gross_income=2000, household_size=3, earned_income=2000)
+        net = va_source.calculate_net_income(
+            gross_income=2000, household_size=3, earned_income=2000
+        )
         assert net == pytest.approx(1391.0, rel=0.01)
 
     def test_net_income_zero_floor(self, va_source: SNAPSource) -> None:
@@ -92,8 +101,12 @@ class TestNetIncomeCalculation:
 
     def test_shelter_cap_at_744(self, va_source: SNAPSource) -> None:
         # Generate two cases where excess shelter differs but both exceed cap
-        net_a = va_source.calculate_net_income(gross_income=2000, household_size=3, shelter_costs=3000)
-        net_b = va_source.calculate_net_income(gross_income=2000, household_size=3, shelter_costs=2500)
+        net_a = va_source.calculate_net_income(
+            gross_income=2000, household_size=3, shelter_costs=3000
+        )
+        net_b = va_source.calculate_net_income(
+            gross_income=2000, household_size=3, shelter_costs=2500
+        )
         # Both shelter amounts exceed cap, so net should be the same
         assert net_a == net_b
 

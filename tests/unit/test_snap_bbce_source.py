@@ -54,6 +54,31 @@ class TestBBCEParams:
         assert src.bbce_params.gross_income_limit_pct_fpl == 130
 
 
+class TestThresholdsReflectBBCE:
+    """fetch_thresholds() surfaces the state's BBCE asset rule and flags."""
+
+    def test_waived_state_asset_limit_none(self, va):
+        assert va.thresholds().asset_limit_general is None
+        assert va.thresholds().extra["bbce_state"] is True
+        assert va.thresholds().extra["bbce_gross_limit_pct_fpl"] == 200
+
+    def test_cap_state_asset_limit_value(self, tx):
+        assert tx.thresholds().asset_limit_general == 5000
+        assert tx.thresholds().extra["bbce_state"] is True
+
+    def test_non_bbce_state_federal_asset_limit(self, tn):
+        assert tn.thresholds().asset_limit_general == 3000
+        assert tn.thresholds().extra["bbce_state"] is False
+
+    def test_derived_bbce_states_set(self):
+        from govsynth.sources.us.snap_bbce import BBCE_STATES, bbce_states
+
+        states = bbce_states(2026)
+        assert "VA" in states and "CA" in states and "TX" in states
+        assert "TN" not in states and "KS" not in states
+        assert BBCE_STATES == states
+
+
 class TestEffectiveGrossLimit:
     """Derived limits must match ceil(annual_fpl * pct / 100 / 12)."""
 

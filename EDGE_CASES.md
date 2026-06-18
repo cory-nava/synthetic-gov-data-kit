@@ -168,10 +168,11 @@ under BBCE. The same household earning $4,500/month gross would exceed Virginia'
 **ineligible**.
 
 **Data note:** Per-state BBCE parameters live in `data/thresholds/snap_bbce_fy2026.json` (sourced
-from the USDA FNS BBCE States Chart, August 2025). This case is generated via the dedicated
-`SNAPBBCESource` connector (`govsynth/sources/us/snap_bbce.py`), which derives each state's gross
-limit from the bundled FPL table. The base `SNAPSource` still uses an older hardcoded BBCE state list
-(asset-waiver only); reconciling the two is a tracked follow-up.
+from the USDA FNS BBCE States Chart, August 2025). This case — and the SNAP generator's main
+threshold path — are generated via the `SNAPBBCESource` connector
+(`govsynth/sources/us/snap_bbce.py`), which derives each state's gross limit from the bundled FPL
+table. `SNAPSource` models only the federal baseline; BBCE classification is single-sourced from the
+data table (exported as `bbce_states(fiscal_year)` / `BBCE_STATES`).
 
 ---
 

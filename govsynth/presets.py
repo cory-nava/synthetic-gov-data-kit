@@ -35,16 +35,16 @@ PRESETS: dict[str, PresetConfig] = {
     # ── SNAP ──────────────────────────────────────────────────────────────
     "snap.va": PresetConfig(
         program="snap",
-        source_class="govsynth.sources.us.snap.SNAPSource",
+        source_class="govsynth.sources.us.snap_bbce.SNAPBBCESource",
         source_kwargs={"fiscal_year": 2026, "state": "VA"},
         generator_class="govsynth.generators.snap_eligibility.SNAPEligibilityGenerator",
         generator_kwargs={"fiscal_year": 2026, "state": "VA"},
         profile_strategy="edge_saturated",
-        description="Virginia SNAP FY2026 — strict asset test state",
+        description="Virginia SNAP FY2026 — BBCE (200% FPL gross, no asset test)",
     ),
     "snap.ca": PresetConfig(
         program="snap",
-        source_class="govsynth.sources.us.snap.SNAPSource",
+        source_class="govsynth.sources.us.snap_bbce.SNAPBBCESource",
         source_kwargs={"fiscal_year": 2026, "state": "CA"},
         generator_class="govsynth.generators.snap_eligibility.SNAPEligibilityGenerator",
         generator_kwargs={"fiscal_year": 2026, "state": "CA"},
@@ -53,25 +53,21 @@ PRESETS: dict[str, PresetConfig] = {
     ),
     "snap.tx": PresetConfig(
         program="snap",
-        source_class="govsynth.sources.us.snap.SNAPSource",
+        source_class="govsynth.sources.us.snap_bbce.SNAPBBCESource",
         source_kwargs={"fiscal_year": 2026, "state": "TX"},
         generator_class="govsynth.generators.snap_eligibility.SNAPEligibilityGenerator",
         generator_kwargs={"fiscal_year": 2026, "state": "TX"},
         profile_strategy="edge_saturated",
-        # NOTE: Per the FNS BBCE States Chart (Aug 2025), TX is actually a BBCE state
-        # (165% FPL gross limit, $5,000 asset cap). This preset still uses the federal
-        # strict-asset model via SNAPSource; see data/thresholds/snap_bbce_fy2026.json
-        # and the BBCE design spec's "Known follow-ups".
-        description="Texas SNAP FY2026 — federal strict-asset model (TX is BBCE per FNS Aug 2025)",
+        description="Texas SNAP FY2026 — BBCE (165% FPL gross, $5,000 asset cap)",
     ),
     "snap.md": PresetConfig(
         program="snap",
-        source_class="govsynth.sources.us.snap.SNAPSource",
+        source_class="govsynth.sources.us.snap_bbce.SNAPBBCESource",
         source_kwargs={"fiscal_year": 2026, "state": "MD"},
         generator_class="govsynth.generators.snap_eligibility.SNAPEligibilityGenerator",
         generator_kwargs={"fiscal_year": 2026, "state": "MD"},
         profile_strategy="edge_saturated",
-        description="Maryland SNAP FY2026 — BBCE state (200% FPL gross limit, asset test waived)",
+        description="Maryland SNAP FY2026 — BBCE (200% FPL gross, no asset test)",
     ),
     # ── WIC ───────────────────────────────────────────────────────────────
     "wic.national": PresetConfig(
