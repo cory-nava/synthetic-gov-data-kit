@@ -16,11 +16,13 @@ MAGI vs SNAP NET INCOME:
   excludes others (e.g., SNAP standard deductions do NOT apply).
   For Medicaid, income = gross income minus a 5% FPL disregard.
 """
+
 from __future__ import annotations
 
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, cast
 
 from govsynth.fiscal_year import DEFAULT_MEDICAID_CY, FiscalYearConfig
 from govsynth.sources.base import DataSource, HouseholdThreshold, ProgramThresholds
@@ -29,10 +31,10 @@ _DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "thresholds"
 
 
 @lru_cache(maxsize=16)
-def _load_fpl_json(path_str: str) -> dict:
+def _load_fpl_json(path_str: str) -> dict[str, Any]:
     """Cached loader for FPL guidelines JSON."""
     with open(path_str) as f:
-        return json.load(f)
+        return cast("dict[str, Any]", json.load(f))
 
 
 class MedicaidSource(DataSource):
@@ -52,13 +54,13 @@ class MedicaidSource(DataSource):
     def __init__(self, calendar_year: int = DEFAULT_MEDICAID_CY, state: str = "VA") -> None:
         super().__init__(year=calendar_year, state=state)
         self.fy_config = FiscalYearConfig.for_program("medicaid", calendar_year)
-        self._raw: dict | None = None
+        self._raw: dict[str, Any] | None = None
 
     @property
     def program(self) -> str:
         return "medicaid"
 
-    def _load_raw(self) -> dict:
+    def _load_raw(self) -> dict[str, Any]:
         if self._raw is None:
             self._raw = self._load_threshold_json(self.fy_config.threshold_filename)
         return self._raw
@@ -120,13 +122,20 @@ class MedicaidSource(DataSource):
 
     def fetch_policy_summary(self) -> str:
         expansion = self.is_expansion_state()
-        status = "expansion state (covers adults to 138% FPL)" if expansion else "non-expansion state"
+        status = (
+            "expansion state (covers adults to 138% FPL)" if expansion else "non-expansion state"
+        )
+        adults_line = (
+            "- Adults: covered up to 138% FPL under ACA expansion."
+            if expansion
+            else "- Adults without children: NO coverage (coverage gap)."
+        )
         return (
             f"Medicaid Eligibility Rules (CY{self.year}, {self.state} — {status}):\n"
             f"  [Based on {self.fy_config.fpl_year} HHS poverty guidelines]\n"
             "- Income methodology: MAGI (Modified Adjusted Gross Income) (42 CFR 435.603)\n"
             "- Income ≠ SNAP net income: MAGI has different rules, no SNAP deductions apply.\n"
-            f"{'- Adults: covered up to 138% FPL under ACA expansion.' if expansion else '- Adults without children: NO coverage (coverage gap).'}\n"
+            f"{adults_line}\n"
             "- Children/pregnant women: higher limits in all states.\n"
             "- No asset test for MAGI-based Medicaid.\n"
             f"Source: {self._load_raw()['_metadata']['source']}"
@@ -145,7 +154,9 @@ class MedicaidSource(DataSource):
         raw = self._load_raw()
         fpl_file = _DATA_DIR / f"us_fpl_{self.fy_config.fpl_year}.json"
         fpl_data = _load_fpl_json(str(fpl_file))
-        monthly_fpl_1 = float(fpl_data["regions"]["contiguous_48_dc"]["by_household_size"]["1"]["monthly"])
+        monthly_fpl_1 = float(
+            fpl_data["regions"]["contiguous_48_dc"]["by_household_size"]["1"]["monthly"]
+        )
 
         expansion = self.is_expansion_state()
         non_exp = raw.get("non_expansion_income_limits_pct_fpl", {})
@@ -156,11 +167,19 @@ class MedicaidSource(DataSource):
             return None  # Coverage gap in non-expansion states
 
         elif applicant_type in ("pregnant", "postpartum"):
-            pct = non_exp.get("pregnant_women_pct_fpl", {}).get(self.state, 200) if not expansion else 200
+            pct = (
+                non_exp.get("pregnant_women_pct_fpl", {}).get(self.state, 200)
+                if not expansion
+                else 200
+            )
             return monthly_fpl_1 * (pct / 100.0)
 
         elif applicant_type in ("child_0_18", "child"):
-            pct = non_exp.get("children_0_18_pct_fpl", {}).get(self.state, 200) if not expansion else 317
+            pct = (
+                non_exp.get("children_0_18_pct_fpl", {}).get(self.state, 200)
+                if not expansion
+                else 317
+            )
             return monthly_fpl_1 * (pct / 100.0)
 
         elif applicant_type == "parent_caretaker":

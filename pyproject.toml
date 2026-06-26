@@ -47,6 +47,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
     "mypy>=1.10",
+    "types-PyYAML>=6.0",
     "pre-commit>=3.7",
     "ipykernel>=6.29",
     "jupyter>=1.0",
@@ -75,7 +76,17 @@ src = ["govsynth", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "ANN", "B", "SIM"]
-ignore = ["ANN101", "ANN102"]
+# ANN101/ANN102 are deprecated; ANN401 (disallow `Any`) is intentionally not enforced —
+# `Any` is used deliberately at dynamic boundaries (pipeline wiring, formatters, JSON I/O).
+ignore = ["ANN101", "ANN102", "ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests, notebooks, and dev scripts are not shipped. Style rules (annotations, line
+# length, import sorting, illustrative idioms) add noise there; real errors (F8xx
+# undefined/unused names) are still enforced.
+"tests/**" = ["ANN", "E501"]
+"notebooks/**" = ["ANN", "E501", "E401", "E402", "F401", "F811", "I", "B"]
+"scripts/**" = ["ANN", "E501"]
 
 [tool.mypy]
 python_version = "3.10"

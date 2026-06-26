@@ -2,11 +2,12 @@
 
 Checks _metadata.verification_status in all bundled threshold JSON files.
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -28,9 +29,9 @@ _PROGRAM_NORMALIZATION: dict[str, str] = {
 _VALID_PROGRAMS = set(_VERIFICATION_URLS.keys())
 
 
-def _get_program_key(meta: dict) -> str:
+def _get_program_key(meta: dict[str, Any]) -> str:
     """Extract and normalize the program key from file metadata."""
-    raw = meta.get("program", meta.get("type", "unknown"))
+    raw: str = meta.get("program", meta.get("type", "unknown"))
     return _PROGRAM_NORMALIZATION.get(raw, raw)
 
 
@@ -69,11 +70,13 @@ def verify_thresholds(
         checked.append(path.name)
 
         if status != "verified":
-            unverified.append({
-                "file": path.name,
-                "verification_status": status,
-                "verify_url": _VERIFICATION_URLS.get(prog_key, ""),
-            })
+            unverified.append(
+                {
+                    "file": path.name,
+                    "verification_status": status,
+                    "verify_url": _VERIFICATION_URLS.get(prog_key, ""),
+                }
+            )
 
     result = {
         "status": "ok" if not unverified else "needs_verification",

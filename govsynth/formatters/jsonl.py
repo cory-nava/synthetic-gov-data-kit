@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from govsynth.models.test_case import TestCase
 
@@ -31,7 +32,7 @@ class JSONLFormatter:
         self.include_rationale = include_rationale_in_answer
         self.system_prompt = system_prompt
 
-    def format_one(self, case: TestCase) -> dict:
+    def format_one(self, case: TestCase) -> dict[str, Any]:
         """Convert a TestCase to a fine-tuning message dict."""
         assistant_content = case.expected_answer
         if self.include_rationale:

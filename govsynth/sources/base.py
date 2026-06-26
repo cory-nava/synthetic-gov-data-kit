@@ -8,7 +8,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 THRESHOLD_DIR = DATA_DIR / "thresholds"
 SEED_DIR = DATA_DIR / "seeds"
@@ -20,7 +19,8 @@ def _load_json_file(path_str: str) -> dict[str, Any]:
     import json
 
     with open(path_str) as f:
-        return json.load(f)
+        data: dict[str, Any] = json.load(f)
+        return data
 
 
 @dataclass

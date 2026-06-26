@@ -1,7 +1,9 @@
 """Tests that Pipeline and BatchPipeline respect an injected Console instance."""
+
 import io
+
+from govsynth.pipeline import BatchPipeline, Pipeline
 from rich.console import Console
-from govsynth.pipeline import Pipeline, BatchPipeline
 
 
 def _capturing_console() -> tuple[Console, io.StringIO]:

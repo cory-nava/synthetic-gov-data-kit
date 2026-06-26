@@ -1,7 +1,8 @@
 """Tests for govsynth.cli.readers — file deserialization."""
-from pathlib import Path
-import pytest
 
+from pathlib import Path
+
+import pytest
 from govsynth.cli.readers import detect_format, read_yaml
 
 

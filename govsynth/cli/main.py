@@ -1,4 +1,5 @@
 """Top-level Typer app for govsynth CLI."""
+
 from __future__ import annotations
 
 import typer
@@ -11,14 +12,14 @@ app = typer.Typer(
 
 
 def _register_commands() -> None:
-    from govsynth.cli.commands.list_presets import app as list_presets_app
-    from govsynth.cli.commands.verify import verify_thresholds
-    from govsynth.cli.commands.generate import generate
     from govsynth.cli.commands.batch import batch
-    from govsynth.cli.commands.validate import validate
-    from govsynth.cli.commands.show import show
+    from govsynth.cli.commands.generate import generate
+    from govsynth.cli.commands.list_presets import app as list_presets_app
     from govsynth.cli.commands.parse_policy import parse_policy
     from govsynth.cli.commands.refresh_census import refresh_census_data
+    from govsynth.cli.commands.show import show
+    from govsynth.cli.commands.validate import validate
+    from govsynth.cli.commands.verify import verify_thresholds
 
     app.add_typer(list_presets_app, name="list-presets")
     app.command("verify-thresholds")(verify_thresholds)

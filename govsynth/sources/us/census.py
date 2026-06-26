@@ -15,15 +15,17 @@ import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 _CENSUS_DIR = Path(__file__).parent.parent.parent.parent / "data" / "census"
 
 
 @lru_cache(maxsize=64)
-def _load_census_json(path_str: str) -> dict:
+def _load_census_json(path_str: str) -> dict[str, Any]:
     """Cached JSON loader for census data."""
     with open(path_str, encoding="utf-8") as f:
-        return json.load(f)
+        data: dict[str, Any] = json.load(f)
+    return data
 
 
 @dataclass
@@ -33,7 +35,7 @@ class CensusDistribution:
     state: str
     income_mu: float
     income_sigma: float
-    fpl_buckets: list[dict]
+    fpl_buckets: list[dict[str, Any]]
     household_size_weights: list[float]
     pct_with_children: float
     pct_elderly_or_disabled: float
@@ -89,7 +91,7 @@ class CensusDataSource:
         return _parse(data)
 
 
-def _parse(data: dict) -> CensusDistribution:
+def _parse(data: dict[str, Any]) -> CensusDistribution:
     """Deserialize a census JSON dict into a CensusDistribution."""
     inc = data["income"]
     hsg = data["housing"]

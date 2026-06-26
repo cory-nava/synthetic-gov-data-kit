@@ -2,12 +2,11 @@
 
 No tests make real Census API calls. Network tests are manual/opt-in only.
 """
+
 from __future__ import annotations
 
-import pytest
-from typer.testing import CliRunner
-
 from govsynth.cli.main import app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -33,9 +32,7 @@ def test_dry_run_mentions_state() -> None:
 
 
 def test_dry_run_json_exits_zero() -> None:
-    result = runner.invoke(
-        app, ["refresh-census-data", "--state", "VA", "--dry-run", "--json"]
-    )
+    result = runner.invoke(app, ["refresh-census-data", "--state", "VA", "--dry-run", "--json"])
     assert result.exit_code == 0
 
 

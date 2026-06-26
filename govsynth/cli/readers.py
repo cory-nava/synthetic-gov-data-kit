@@ -5,6 +5,7 @@ Format support:
   jsonl → raw dicts only (fine-tuning format is lossy, not TestCase-round-trippable)
   csv   → raw dicts only (rationale steps serialized as count, lossy)
 """
+
 from __future__ import annotations
 
 import csv
@@ -33,8 +34,7 @@ def detect_format(path: Path, force: str | None = None) -> str:
     if ext == ".csv":
         return "csv"
     print(
-        f"Error: cannot detect format for '{path.name}'. "
-        "Use --format yaml|jsonl|csv to specify.",
+        f"Error: cannot detect format for '{path.name}'. Use --format yaml|jsonl|csv to specify.",
         file=sys.stderr,
     )
     raise SystemExit(2)

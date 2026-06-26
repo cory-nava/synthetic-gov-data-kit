@@ -102,8 +102,6 @@ class SNAPSource(DataSource):
         # Federal baseline asset limit. BBCE waivers/caps are applied by SNAPBBCESource.
         asset_limit: float | None = float(raw["asset_limit_general"])
 
-        std_key = f"standard_deductions_{self._region}"
-        raw_std = raw.get(std_key, raw.get("standard_deductions_48_states_dc", {}))
         std_deductions = {size: get_standard_deduction(size, self._region) for size in range(1, 9)}
 
         shelter_key = f"excess_shelter_deduction_cap_{self._region}"
@@ -134,6 +132,7 @@ class SNAPSource(DataSource):
 
     def fetch_policy_summary(self) -> str:
         t = self.thresholds()
+        extra = t.extra or {}
         asset_note = (
             f"Asset limits: ${t.asset_limit_general:,.0f} general, "
             f"${t.asset_limit_elderly_disabled:,.0f} elderly/disabled (60+ or disabled)."
@@ -143,11 +142,12 @@ class SNAPSource(DataSource):
             f"  [Based on {self.fy_config.fpl_year} HHS poverty guidelines]\n"
             f"- Gross income test: ≤130% FPL (7 CFR 273.9(a)(1))\n"
             f"- Net income test: ≤100% FPL (7 CFR 273.9(a)(2))\n"
-            f"- Deductions: 20% earned income + standard deduction + allowable shelter/utility (7 CFR 273.9(c))\n"
+            f"- Deductions: 20% earned income + standard deduction + allowable "
+            f"shelter/utility (7 CFR 273.9(c))\n"
             f"- {asset_note}\n"
             f"- Elderly/disabled: exempt from gross income test; $4,500 asset limit.\n"
             f"- Standard deduction (HH 1-3): $209/month; HH4: $223; HH5: $261; HH6+: $299.\n"
-            f"- Excess shelter cap: ${t.extra['excess_shelter_cap']:,.0f}/month.\n"
+            f"- Excess shelter cap: ${extra['excess_shelter_cap']:,.0f}/month.\n"
             f"Source: {t.source}"
         )
 
@@ -186,12 +186,14 @@ class SNAPSource(DataSource):
 
         # (c)(5) Shelter deduction — homeless flat deduction or excess shelter calculation
         # Per 7 CFR 273.9(c)(6), these two paths are mutually exclusive.
+        extra = t.extra or {}
+        shelter_ded: float
         if is_homeless:
-            shelter_ded = t.extra["homeless_shelter_deduction"]
+            shelter_ded = float(extra["homeless_shelter_deduction"])
         else:
             shelter_ded = 0.0
             if shelter_costs:
-                shelter_cap = t.extra["excess_shelter_cap"] if t.extra else 744.0
+                shelter_cap = float(extra.get("excess_shelter_cap", 744.0))
                 half_income = max(0.0, after_medical) * 0.5
                 raw_excess = max(0.0, shelter_costs - half_income)
                 shelter_ded = (
@@ -217,13 +219,12 @@ class SNAPSource(DataSource):
         limits = t.by_household_size(min(household_size, 8))
 
         # Gross income test — waived for elderly/disabled
-        if not has_elderly_or_disabled:
-            if gross_income > limits.gross_monthly:
-                return False, (
-                    f"Ineligible: gross income ${gross_income:,.2f} exceeds "
-                    f"${limits.gross_monthly:,.2f} (130% FPL, {self.fy_config.period_label}, "
-                    f"{household_size}-person HH)"
-                )
+        if not has_elderly_or_disabled and gross_income > limits.gross_monthly:
+            return False, (
+                f"Ineligible: gross income ${gross_income:,.2f} exceeds "
+                f"${limits.gross_monthly:,.2f} (130% FPL, {self.fy_config.period_label}, "
+                f"{household_size}-person HH)"
+            )
 
         # Net income test
         eff_net = net_income if net_income is not None else gross_income

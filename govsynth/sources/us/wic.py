@@ -17,6 +17,7 @@ CRITICAL CALENDAR NOTE:
     HH5: $5,805  HH6: $6,653  HH7: $7,501  HH8: $8,349
   Source: Federal Register 2025-03576, 90 FR 11598
 """
+
 from __future__ import annotations
 
 from govsynth.fiscal_year import DEFAULT_WIC_FY, FiscalYearConfig
@@ -90,11 +91,12 @@ class WICSource(DataSource):
 
     def fetch_policy_summary(self) -> str:
         t = self.thresholds()
+        extra = t.extra or {}
         return (
-            f"WIC Income Eligibility Guidelines ({t.extra['effective_start']} to "
-            f"{t.extra['effective_end']}, {self._region.replace('_', ' ').title()}):\n"
+            f"WIC Income Eligibility Guidelines ({extra['effective_start']} to "
+            f"{extra['effective_end']}, {self._region.replace('_', ' ').title()}):\n"
             f"  [CRITICAL: WIC runs July 1–June 30, not Oct 1–Sep 30]\n"
-            f"  [Based on {t.extra['fpl_basis_year']} HHS poverty guidelines × 1.85, rounded up]\n"
+            f"  [Based on {extra['fpl_basis_year']} HHS poverty guidelines × 1.85, rounded up]\n"
             "- Income test: ≤185% FPL (7 CFR 246.7(d)(1))\n"
             "- No asset test.\n"
             "- Categorical eligibility: SNAP/Medicaid/TANF = auto income-eligible.\n"
@@ -126,10 +128,11 @@ class WICSource(DataSource):
 
         limits = t.by_household_size(min(household_size, 8))
         if monthly_gross_income > limits.gross_monthly:
+            extra = t.extra or {}
             return False, (
                 f"Ineligible: gross income ${monthly_gross_income:,.2f} exceeds "
                 f"${limits.gross_monthly:,.2f} (185% FPL, {household_size}-person HH, "
-                f"{t.extra['effective_start']} to {t.extra['effective_end']})"
+                f"{extra['effective_start']} to {extra['effective_end']})"
             )
 
         return True, (

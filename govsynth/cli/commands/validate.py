@@ -1,4 +1,5 @@
 """govsynth validate command — validate output files against TestCase schema."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -56,8 +57,7 @@ def validate(
                 missing = required_keys - row.keys()
                 errors.append(f"row missing keys: {missing}")
         console.print(
-            f"Validating {file.name} (JSONL structural check) ... "
-            f"{valid_count}/{total_count} valid"
+            f"Validating {file.name} (JSONL structural check) ... {valid_count}/{total_count} valid"
         )
 
     elif fmt == "csv":
@@ -71,8 +71,7 @@ def validate(
                 missing = required_cols - row.keys()
                 errors.append(f"row missing columns: {missing}")
         console.print(
-            f"Validating {file.name} (CSV structural check) ... "
-            f"{valid_count}/{total_count} valid"
+            f"Validating {file.name} (CSV structural check) ... {valid_count}/{total_count} valid"
         )
 
     status_data = {

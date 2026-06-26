@@ -31,14 +31,20 @@ def _case_to_dict(case: TestCase) -> dict[str, Any]:
             "has_elderly_or_disabled": case.scenario.has_elderly_or_disabled,
             "has_dependent_children": case.scenario.has_dependent_children,
             "citizenship_status": case.scenario.citizenship_status,
-            **({"additional_context": case.scenario.additional_context}
-               if case.scenario.additional_context else {}),
+            **(
+                {"additional_context": case.scenario.additional_context}
+                if case.scenario.additional_context
+                else {}
+            ),
         },
         "task": {
             "instruction": case.task.instruction,
             **({"portal": case.task.portal} if case.task.portal else {}),
-            **({"documents_available": case.task.documents_available}
-               if case.task.documents_available else {}),
+            **(
+                {"documents_available": case.task.documents_available}
+                if case.task.documents_available
+                else {}
+            ),
         },
         "expected_outcome": case.expected_outcome,
         "expected_answer": case.expected_answer,

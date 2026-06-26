@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 import typer
@@ -110,7 +110,7 @@ def refresh_census_data(
     if dry_run:
         for s in states:
             out_path = str(_DATA_DIR / f"{s.lower()}.json")
-            msg: dict = {
+            msg: dict[str, Any] = {
                 "command": "refresh-census-data",
                 "state": s,
                 "status": "dry_run",
@@ -169,7 +169,7 @@ def refresh_census_data(
                 except Exception:
                     pass
             failed.append(s)
-            err: dict = {
+            err: dict[str, Any] = {
                 "command": "refresh-census-data",
                 "state": s,
                 "status": "error",
@@ -195,7 +195,7 @@ def refresh_census_data(
 
     # Summary line
     status = "ok" if not failed else ("partial" if ok else "error")
-    summary: dict = {
+    summary: dict[str, Any] = {
         "command": "refresh-census-data",
         "summary": {"total": len(states), "ok": len(ok), "failed": len(failed)},
         "status": status,

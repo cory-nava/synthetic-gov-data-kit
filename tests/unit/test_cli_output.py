@@ -1,8 +1,10 @@
 """Tests for govsynth.cli.output helpers."""
+
 import io
 import json
+
+from govsynth.cli.output import emit_json, emit_status, make_console
 from rich.console import Console
-from govsynth.cli.output import make_console, emit_json, emit_status
 
 
 def test_make_console_writes_to_stderr(capsys):

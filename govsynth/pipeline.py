@@ -10,6 +10,7 @@ Usage:
     cases = pipeline.generate(n=100, seed=42)
     pipeline.save(cases, "./output/", formats=["yaml", "jsonl", "csv"])
 """
+
 from __future__ import annotations
 
 import importlib
@@ -17,11 +18,12 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from govsynth.models.enums import OutputFormat
 from govsynth.models.test_case import TestCase
 from govsynth.presets import PRESETS, PresetConfig
+
 
 def _import_class(dotted_path: str) -> Any:
     """Import a class from a dotted module path."""
@@ -56,7 +58,7 @@ class Pipeline:
         profile_strategy: str | None = None,
         console: Console | None = None,
         **generator_kwargs: Any,
-    ) -> "Pipeline":
+    ) -> Pipeline:
         """Create a Pipeline from a named preset.
 
         Args:
@@ -68,9 +70,7 @@ class Pipeline:
         """
         if preset_name not in PRESETS:
             available = ", ".join(sorted(PRESETS.keys()))
-            raise ValueError(
-                f"Unknown preset '{preset_name}'. Available presets: {available}"
-            )
+            raise ValueError(f"Unknown preset '{preset_name}'. Available presets: {available}")
 
         config: PresetConfig = PRESETS[preset_name]
         gen_class = _import_class(config.generator_class)
@@ -131,9 +131,7 @@ class Pipeline:
             )
             cases = [c for c in cases if c.is_valid()]
 
-        self._console.print(
-            f"[green]✓[/green] Generated [bold]{len(cases)}[/bold] valid cases."
-        )
+        self._console.print(f"[green]✓[/green] Generated [bold]{len(cases)}[/bold] valid cases.")
         return cases
 
     def save(
@@ -161,31 +159,35 @@ class Pipeline:
 
             if fmt == OutputFormat.YAML.value:
                 from govsynth.formatters.yaml_fmt import YAMLFormatter
-                formatter = YAMLFormatter()
+
+                yaml_formatter = YAMLFormatter()
                 out_dir = output if output.suffix == "" else output.parent / "yaml"
-                formatter.write_many(cases, out_dir, one_file_per_case=one_file_per_case)
+                yaml_formatter.write_many(cases, out_dir, one_file_per_case=one_file_per_case)
                 self._console.print(f"[green]✓[/green] Saved YAML → {out_dir}/")
 
             elif fmt == OutputFormat.JSONL.value:
                 from govsynth.formatters.jsonl import JSONLFormatter
-                formatter = JSONLFormatter()
+
+                jsonl_formatter = JSONLFormatter()
                 out_path = output if output.suffix == ".jsonl" else output / "cases.jsonl"
-                formatter.write(cases, out_path)
+                jsonl_formatter.write(cases, out_path)
                 self._console.print(f"[green]✓[/green] Saved JSONL → {out_path}")
 
             elif fmt == OutputFormat.CSV.value:
                 from govsynth.formatters.csv_fmt import CSVFormatter
-                formatter = CSVFormatter()
+
+                csv_formatter = CSVFormatter()
                 out_path = output if output.suffix == ".csv" else output / "cases.csv"
-                formatter.write(cases, out_path)
+                csv_formatter.write(cases, out_path)
                 self._console.print(f"[green]✓[/green] Saved CSV → {out_path}")
 
             elif fmt == OutputFormat.HF_DATASET.value:
                 try:
                     from govsynth.formatters.hf_dataset import HFDatasetFormatter
-                    formatter = HFDatasetFormatter()
+
+                    hf_formatter = HFDatasetFormatter()
                     out_dir = output if output.suffix == "" else output.parent / "hf_dataset"
-                    formatter.write(cases, out_dir)
+                    hf_formatter.write(cases, out_dir)
                     self._console.print(f"[green]✓[/green] Saved HF Dataset → {out_dir}/")
                 except ImportError:
                     self._console.print(
@@ -212,7 +214,7 @@ class BatchPipeline:
     @classmethod
     def from_presets(
         cls, preset_names: list[str], console: Console | None = None, **kwargs: Any
-    ) -> "BatchPipeline":
+    ) -> BatchPipeline:
         """Create a BatchPipeline from a list of preset names."""
         pipelines = [Pipeline.from_preset(name, console=console, **kwargs) for name in preset_names]
         return cls(pipelines, console=console)
@@ -242,10 +244,11 @@ class BatchPipeline:
     def save(self, cases: list[TestCase], output_dir: str | Path, format: str = "yaml") -> None:
         """Deprecated: use Pipeline.save() directly. Will be removed in v0.2."""
         import warnings
+
         warnings.warn(
             "BatchPipeline.save() is deprecated; use Pipeline.save() directly.",
             DeprecationWarning,
             stacklevel=2,
         )
-        p = Pipeline(generator=None, console=self._console)  # type: ignore[arg-type]
+        p = Pipeline(generator=None, console=self._console)
         p.save(cases, output_dir, formats=[format])

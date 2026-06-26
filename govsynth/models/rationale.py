@@ -34,9 +34,7 @@ class ReasoningStep(BaseModel):
         default_factory=dict,
         description="Key-value pairs of values fed into this step",
     )
-    computation: str = Field(
-        description="What was compared or calculated, in plain language"
-    )
+    computation: str = Field(description="What was compared or calculated, in plain language")
     result: str = Field(description="Outcome of this step, e.g. 'PASS' or 'net_income = $1,651'")
     is_determinative: bool = Field(
         default=False,
@@ -57,12 +55,8 @@ class RationaleTrace(BaseModel):
     are scored.
     """
 
-    steps: list[ReasoningStep] = Field(
-        description="Ordered list of reasoning steps"
-    )
-    conclusion: str = Field(
-        description="Final conclusion summarizing all steps and the outcome"
-    )
+    steps: list[ReasoningStep] = Field(description="Ordered list of reasoning steps")
+    conclusion: str = Field(description="Final conclusion summarizing all steps and the outcome")
     policy_basis: list[PolicyCitation] = Field(
         default_factory=list,
         description="Policy documents and regulations that ground this trace",

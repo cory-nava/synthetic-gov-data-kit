@@ -15,16 +15,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from govsynth.models.enums import Difficulty, Program, TaskType
+from govsynth.models.enums import Difficulty, TaskType
 from govsynth.models.rationale import RationaleTrace
 
 
 class ScenarioBlock(BaseModel):
     """The citizen situation presented to the model."""
 
-    summary: str = Field(
-        description="Natural language description of the citizen's situation"
-    )
+    summary: str = Field(description="Natural language description of the citizen's situation")
     household_size: int = Field(ge=1, le=20, description="Number of people in the household")
     monthly_gross_income: float = Field(ge=0, description="Monthly gross income in USD")
     monthly_net_income: float | None = Field(
@@ -47,9 +45,7 @@ class ScenarioBlock(BaseModel):
 class TaskBlock(BaseModel):
     """What the model is asked to do."""
 
-    instruction: str = Field(
-        description="The task instruction presented to the model"
-    )
+    instruction: str = Field(description="The task instruction presented to the model")
     portal: str | None = Field(
         default=None,
         description="For agentic tasks: the portal or system to interact with",
@@ -78,13 +74,9 @@ class TestCase(BaseModel):
     expected_outcome: str = Field(
         description="Short outcome label, e.g. 'eligible' or 'ineligible'"
     )
-    expected_answer: str = Field(
-        description="Full natural language expected answer"
-    )
+    expected_answer: str = Field(description="Full natural language expected answer")
 
-    rationale_trace: RationaleTrace = Field(
-        description="Step-by-step correct reasoning chain"
-    )
+    rationale_trace: RationaleTrace = Field(description="Step-by-step correct reasoning chain")
 
     variation_tags: list[str] = Field(
         default_factory=list,
@@ -137,7 +129,9 @@ class TestCase(BaseModel):
             raise ValueError("TestCase must have at least one source citation")
         return self
 
-    def validate(self) -> list[str]:
+    # NOTE: intentionally shadows Pydantic v1's deprecated BaseModel.validate classmethod;
+    # this is a public instance API used by the CLI and tests, so it cannot be renamed.
+    def validate(self) -> list[str]:  # type: ignore[override]
         """Run compatibility checks. Returns list of error strings (empty = valid)."""
         errors: list[str] = []
 

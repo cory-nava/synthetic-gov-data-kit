@@ -1,4 +1,5 @@
 """govsynth parse-policy command — stub (not yet implemented)."""
+
 from __future__ import annotations
 
 from pathlib import Path

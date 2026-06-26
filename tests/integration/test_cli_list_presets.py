@@ -1,7 +1,9 @@
 """Integration tests for govsynth list-presets."""
+
 import json
-from typer.testing import CliRunner
+
 from govsynth.cli.main import app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 

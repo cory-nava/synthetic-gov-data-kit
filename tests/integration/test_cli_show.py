@@ -1,9 +1,11 @@
 """Integration tests for govsynth show."""
+
 import json
 from pathlib import Path
-from typer.testing import CliRunner
+
 from govsynth.cli.main import app
 from govsynth.pipeline import Pipeline
+from typer.testing import CliRunner
 
 runner = CliRunner()
 

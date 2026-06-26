@@ -1,7 +1,5 @@
 import random
 
-import pytest
-
 from govsynth.generators.snap_eligibility import SNAPEligibilityGenerator
 
 
@@ -33,9 +31,6 @@ def test_student_exclusion():
     assert case.expected_outcome == "ineligible"
     assert case.is_valid()
     # Rationale must mention checking exceptions under 273.5(b)
-    full_rationale = " ".join(
-        (step.computation or "") + " " + (step.note or "") for step in case.rationale_trace.steps
-    )
     assert "273.5" in " ".join(step.rule_applied for step in case.rationale_trace.steps)
     # Income test must NOT be the determinative step — student check fires first
     determinative_steps = [s for s in case.rationale_trace.steps if s.is_determinative]

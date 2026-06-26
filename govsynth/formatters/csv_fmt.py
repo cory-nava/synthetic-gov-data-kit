@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import csv
-import json
 from pathlib import Path
+from typing import Any
 
 from govsynth.models.test_case import TestCase
 
@@ -33,7 +33,7 @@ class CSVFormatter:
         "expected_answer",
     ]
 
-    def format_row(self, case: TestCase) -> dict:
+    def format_row(self, case: TestCase) -> dict[str, Any]:
         return {
             "case_id": case.case_id,
             "program": case.program,

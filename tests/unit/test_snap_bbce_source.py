@@ -13,7 +13,6 @@ State roles used here:
 import math
 
 import pytest
-
 from govsynth.sources.us.snap_bbce import SNAPBBCESource
 
 
@@ -76,7 +75,7 @@ class TestThresholdsReflectBBCE:
         states = bbce_states(2026)
         assert "VA" in states and "CA" in states and "TX" in states
         assert "TN" not in states and "KS" not in states
-        assert BBCE_STATES == states
+        assert states == BBCE_STATES
 
 
 class TestEffectiveGrossLimit:

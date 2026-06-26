@@ -1,6 +1,7 @@
 """Integration tests for govsynth parse-policy (stub)."""
-from typer.testing import CliRunner
+
 from govsynth.cli.main import app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 

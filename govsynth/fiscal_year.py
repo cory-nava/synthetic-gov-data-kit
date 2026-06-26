@@ -37,21 +37,21 @@ from enum import Enum
 class FiscalCalendar(str, Enum):
     """Which fiscal calendar a program uses."""
 
-    FEDERAL_FY = "federal_fy"        # Oct 1 – Sep 30 (SNAP, CHIP, Section 8, LIHEAP, TANF)
-    WIC_CALENDAR = "wic_calendar"    # Jul 1 – Jun 30 (WIC — its own distinct cycle)
-    HHS_CALENDAR = "hhs_calendar"    # Calendar year, HHS poverty guidelines (Medicaid MAGI)
-    STATE_FY = "state_fy"            # July 1 – June 30 (varies by state)
+    FEDERAL_FY = "federal_fy"  # Oct 1 – Sep 30 (SNAP, CHIP, Section 8, LIHEAP, TANF)
+    WIC_CALENDAR = "wic_calendar"  # Jul 1 – Jun 30 (WIC — its own distinct cycle)
+    HHS_CALENDAR = "hhs_calendar"  # Calendar year, HHS poverty guidelines (Medicaid MAGI)
+    STATE_FY = "state_fy"  # July 1 – June 30 (varies by state)
 
 
 # Which calendar each program follows
 PROGRAM_FISCAL_CALENDARS: dict[str, FiscalCalendar] = {
-    "snap":      FiscalCalendar.FEDERAL_FY,
-    "wic":       FiscalCalendar.WIC_CALENDAR,   # Jul 1–Jun 30, NOT Oct 1–Sep 30
-    "chip":      FiscalCalendar.FEDERAL_FY,
+    "snap": FiscalCalendar.FEDERAL_FY,
+    "wic": FiscalCalendar.WIC_CALENDAR,  # Jul 1–Jun 30, NOT Oct 1–Sep 30
+    "chip": FiscalCalendar.FEDERAL_FY,
     "section_8": FiscalCalendar.FEDERAL_FY,
-    "liheap":    FiscalCalendar.FEDERAL_FY,
-    "tanf":      FiscalCalendar.FEDERAL_FY,
-    "medicaid":  FiscalCalendar.HHS_CALENDAR,
+    "liheap": FiscalCalendar.FEDERAL_FY,
+    "tanf": FiscalCalendar.FEDERAL_FY,
+    "medicaid": FiscalCalendar.HHS_CALENDAR,
 }
 
 # Which HHS poverty guideline year each federal FY uses as its basis.
@@ -159,7 +159,7 @@ def threshold_file_label(program: str, period_year: int) -> str:
     if calendar == FiscalCalendar.FEDERAL_FY:
         prefix = "FY"
     elif calendar == FiscalCalendar.WIC_CALENDAR:
-        prefix = "FY"   # WIC files use FY label by convention (fy2026 = Jul 2025–Jun 2026)
+        prefix = "FY"  # WIC files use FY label by convention (fy2026 = Jul 2025–Jun 2026)
     else:
         prefix = "CY"
     return f"{prefix}{period_year}"
@@ -192,7 +192,7 @@ class FiscalYearConfig:
         self.fpl_year = fpl_year
 
     @classmethod
-    def for_program(cls, program: str, period_year: int | None = None) -> "FiscalYearConfig":
+    def for_program(cls, program: str, period_year: int | None = None) -> FiscalYearConfig:
         """Create a FiscalYearConfig for the given program and period.
 
         Args:
@@ -251,8 +251,8 @@ class FiscalYearConfig:
 
 
 # Convenience: the default period for each program as of today (March 2026)
-DEFAULT_SNAP_FY = 2026       # FY2026: Oct 1 2025 – Sep 30 2026 (uses 2025 HHS FPL)
-DEFAULT_WIC_FY = 2026        # WIC IEG 2025-2026: Jul 1 2025 – Jun 30 2026 (uses 2025 HHS FPL)
-DEFAULT_MEDICAID_CY = 2026   # CY2026: Jan 1–Dec 31 2026 (uses 2026 HHS FPL)
-DEFAULT_FPL_YEAR_SNAP = 2025 # HHS FPL year underlying SNAP FY2026 and WIC 2025-2026
+DEFAULT_SNAP_FY = 2026  # FY2026: Oct 1 2025 – Sep 30 2026 (uses 2025 HHS FPL)
+DEFAULT_WIC_FY = 2026  # WIC IEG 2025-2026: Jul 1 2025 – Jun 30 2026 (uses 2025 HHS FPL)
+DEFAULT_MEDICAID_CY = 2026  # CY2026: Jan 1–Dec 31 2026 (uses 2026 HHS FPL)
+DEFAULT_FPL_YEAR_SNAP = 2025  # HHS FPL year underlying SNAP FY2026 and WIC 2025-2026
 DEFAULT_FPL_YEAR_MEDICAID = 2026  # HHS FPL year underlying Medicaid CY2026

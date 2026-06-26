@@ -19,6 +19,7 @@ Usage:
     print(score.overall)       # 0.85
     print(score.rule_accuracy) # 1.0
 """
+
 from __future__ import annotations
 
 import re
@@ -81,8 +82,9 @@ class RationaleEvaluator:
         rule_weight: float = 0.30,
         conclusion_weight: float = 0.35,
     ) -> None:
-        assert abs(step_weight + rule_weight + conclusion_weight - 1.0) < 0.001, \
+        assert abs(step_weight + rule_weight + conclusion_weight - 1.0) < 0.001, (
             "Weights must sum to 1.0"
+        )
         self.step_weight = step_weight
         self.rule_weight = rule_weight
         self.conclusion_weight = conclusion_weight
@@ -124,14 +126,12 @@ class RationaleEvaluator:
             expected_outcome=case.expected_outcome,
         )
 
-    def score_batch(
-        self, cases: list[TestCase], model_outputs: list[str]
-    ) -> list[RationaleScore]:
+    def score_batch(self, cases: list[TestCase], model_outputs: list[str]) -> list[RationaleScore]:
         """Score a batch of (case, output) pairs."""
         assert len(cases) == len(model_outputs), "cases and outputs must have same length"
-        return [self.score(c, o) for c, o in zip(cases, model_outputs)]
+        return [self.score(c, o) for c, o in zip(cases, model_outputs, strict=True)]
 
-    def summary_stats(self, scores: list[RationaleScore]) -> dict:
+    def summary_stats(self, scores: list[RationaleScore]) -> dict[str, float]:
         """Compute aggregate stats over a list of scores."""
         if not scores:
             return {}
@@ -192,7 +192,7 @@ class RationaleEvaluator:
                     missing.append(rule)
             else:
                 # Fallback: check if any 5-char substring of rule appears in output
-                if any(rule_lower[i:i+6] in output_lower for i in range(len(rule_lower) - 5)):
+                if any(rule_lower[i : i + 6] in output_lower for i in range(len(rule_lower) - 5)):
                     cited.append(rule)
                 else:
                     missing.append(rule)
@@ -200,19 +200,26 @@ class RationaleEvaluator:
         score = len(cited) / len(all_rules) if all_rules else 1.0
         return score, cited, missing
 
-    def _score_conclusion(
-        self, expected_outcome: str, output_lower: str
-    ) -> tuple[float, str]:
+    def _score_conclusion(self, expected_outcome: str, output_lower: str) -> tuple[float, str]:
         """Check whether the model reached the correct conclusion."""
         expected = expected_outcome.lower().strip()
 
         # Look for clear eligibility signal words
         eligible_signals = [
-            "eligible", "qualifies", "qualify", "approved", "meets the requirements"
+            "eligible",
+            "qualifies",
+            "qualify",
+            "approved",
+            "meets the requirements",
         ]
         ineligible_signals = [
-            "ineligible", "does not qualify", "not eligible", "denied",
-            "exceeds", "over the limit", "too high"
+            "ineligible",
+            "does not qualify",
+            "not eligible",
+            "denied",
+            "exceeds",
+            "over the limit",
+            "too high",
         ]
 
         found_eligible = any(sig in output_lower for sig in eligible_signals)

@@ -1,5 +1,5 @@
-import pytest
 from govsynth.sources.us.medicaid import MedicaidSource
+
 
 def test_medicaid_caching():
     source = MedicaidSource(calendar_year=2026, state="VA")
