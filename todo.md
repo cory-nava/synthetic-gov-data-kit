@@ -89,7 +89,7 @@ Coverage: 76% -> 95% overall (2080 statements, 112 missed). Tests: 109 -> 263.
       out already done (`"""(Roadmap) ..."""` docstring shows in both
       `govsynth --help` and `govsynth parse-policy --help`); verified, no
       change needed
-- [ ] Update `CHANGELOG.md`
+- [x] Update `CHANGELOG.md`
 
 ## Verification
 - [x] `ruff check .` clean
