@@ -1,4 +1,5 @@
 """govsynth show command — pretty-print a single case from an output file."""
+
 from __future__ import annotations
 
 import json
@@ -15,16 +16,10 @@ from govsynth.formatters.yaml_fmt import YAMLFormatter
 
 def show(
     file: Annotated[Path, typer.Argument(help="Output file (.yaml only for full display)")],
-    case_id: Annotated[
-        str | None, typer.Argument(help="Case ID; shows first case if omitted")
-    ] = None,
+    case_id: Annotated[str | None, typer.Argument(help="Case ID; shows first case if omitted")] = None,
     raw: Annotated[bool, typer.Option("--raw", help="Print raw YAML to stdout")] = False,
-    as_json: Annotated[
-        bool, typer.Option("--json", help="Print case as JSON to stdout")
-    ] = False,
-    format_: Annotated[
-        str | None, typer.Option("--format", "-f", help="Force format detection")
-    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print case as JSON to stdout")] = False,
+    format_: Annotated[str | None, typer.Option("--format", "-f", help="Force format detection")] = None,
 ) -> None:
     """Pretty-print a single case from a YAML output file."""
     console = make_console()

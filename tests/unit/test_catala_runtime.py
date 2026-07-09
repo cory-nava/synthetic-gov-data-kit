@@ -32,9 +32,7 @@ def ruleset_file(tmp_path: Path) -> Path:
     return path
 
 
-def _completed(
-    stdout: str = "", stderr: str = "", returncode: int = 0
-) -> subprocess.CompletedProcess[str]:
+def _completed(stdout: str = "", stderr: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
@@ -54,25 +52,19 @@ class TestFindCatalaBinary:
 
 
 class TestCatalaRuntimeConstruction:
-    def test_missing_ruleset_file_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_ruleset_file_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         with pytest.raises(FileNotFoundError):
             CatalaRuntime(tmp_path / "does_not_exist.catala_en")
 
-    def test_missing_binary_raises(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_binary_raises(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: None)
         with pytest.raises(CatalaNotAvailableError):
             CatalaRuntime(ruleset_file)
 
 
 class TestScopeSchema:
-    def test_parses_two_element_array(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_parses_two_element_array(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         input_schema = {"type": "object", "properties": {"income": {"type": "number"}}}
         output_schema = {"type": "object", "properties": {"eligible": {"type": "boolean"}}}
@@ -89,9 +81,7 @@ class TestScopeSchema:
         assert got_input == input_schema
         assert got_output == output_schema
 
-    def test_nonzero_exit_raises_with_stderr(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_nonzero_exit_raises_with_stderr(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         monkeypatch.setattr(
             subprocess,
@@ -118,9 +108,7 @@ class TestScopeSchema:
 
 
 class TestInterpret:
-    def test_json_output_parsed_directly(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_json_output_parsed_directly(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         monkeypatch.setattr(
             subprocess,
@@ -132,9 +120,7 @@ class TestInterpret:
         assert result.outputs == {"eligible": True, "amount": 42}
         assert result.trace == []
 
-    def test_inputs_sent_as_json_on_stdin(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_inputs_sent_as_json_on_stdin(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         captured: dict[str, Any] = {}
 
@@ -147,9 +133,7 @@ class TestInterpret:
         runtime.interpret("Eligibility", {"income": 5000, "household_size": 2})
         assert json.loads(captured["input"]) == {"income": 5000, "household_size": 2}
 
-    def test_no_inputs_sends_no_stdin(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_inputs_sends_no_stdin(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         captured: dict[str, Any] = {}
 
@@ -171,18 +155,14 @@ class TestInterpret:
         result = CatalaRuntime(ruleset_file).interpret("Eligibility", {})
         assert result.outputs == {"eligible": True}
 
-    def test_human_format_fallback(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_human_format_fallback(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         human_stdout = "[RESULT] eligible = true\n[RESULT] benefit_amount = $123.50\n"
         monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _completed(stdout=human_stdout))
         result = CatalaRuntime(ruleset_file).interpret("Eligibility", {})
         assert result.outputs == {"eligible": True, "benefit_amount": 123.50}
 
-    def test_unparseable_output_raises(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unparseable_output_raises(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _completed(stdout="garbage\n"))
         with pytest.raises(CatalaRuntimeError, match="Could not parse"):
@@ -190,15 +170,11 @@ class TestInterpret:
 
     def test_nonzero_exit_raises(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
-        monkeypatch.setattr(
-            subprocess, "run", lambda *a, **kw: _completed(returncode=1, stderr="boom")
-        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _completed(returncode=1, stderr="boom"))
         with pytest.raises(CatalaRuntimeError, match="boom"):
             CatalaRuntime(ruleset_file).interpret("Eligibility", {})
 
-    def test_timeout_raises_catala_runtime_error(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_timeout_raises_catala_runtime_error(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
 
         def fake_run(*a: object, **kw: object) -> subprocess.CompletedProcess[str]:
@@ -220,9 +196,7 @@ class TestInterpret:
         with pytest.raises(CatalaRuntimeError, match="Failed to execute catala"):
             CatalaRuntime(ruleset_file).interpret("Eligibility", {})
 
-    def test_with_trace_writes_and_reads_trace_file(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_with_trace_writes_and_reads_trace_file(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         trace_events = [{"variable": "income_test", "value": True}]
 
@@ -237,9 +211,7 @@ class TestInterpret:
         assert result.outputs == {"eligible": True}
         assert result.trace == trace_events
 
-    def test_with_trace_cleans_up_temp_file(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_with_trace_cleans_up_temp_file(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
         seen_paths: list[Path] = []
 
@@ -257,9 +229,7 @@ class TestInterpret:
     ) -> None:
         # Simulates a catala version that doesn't honor --trace=<path> at all.
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
-        monkeypatch.setattr(
-            subprocess, "run", lambda *a, **kw: _completed(stdout=json.dumps({"eligible": True}))
-        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _completed(stdout=json.dumps({"eligible": True})))
         result = CatalaRuntime(ruleset_file).interpret("Eligibility", {}, with_trace=True)
         assert result.trace == []
 

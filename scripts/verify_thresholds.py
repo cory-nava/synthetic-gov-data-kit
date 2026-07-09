@@ -11,6 +11,7 @@ links to official sources for manual verification.
 It does NOT auto-update thresholds — policy numbers require human verification
 against official government publications. Run this before any CivBench release.
 """
+
 import json
 import sys
 from pathlib import Path
@@ -19,7 +20,7 @@ DATA_DIR = Path(__file__).parent.parent / "data" / "thresholds"
 
 VERIFICATION_URLS = {
     "snap": "https://www.fns.usda.gov/snap/allotment/cola",
-    "wic":  "https://www.fns.usda.gov/wic/wic-income-eligibility-guidelines",
+    "wic": "https://www.fns.usda.gov/wic/wic-income-eligibility-guidelines",
     "medicaid": "https://www.kff.org/medicaid/state-indicator/medicaid-income-eligibility-limits/",
     "us_fpl": "https://aspe.hhs.gov/topics/poverty-economic-mobility/poverty-guidelines",
 }
@@ -76,12 +77,21 @@ def show_snap_fy2026_summary() -> None:
     print("\nSNAP FY2026 — 48 States + DC (USDA FNS COLA Memo, Aug 13 2025)")
     print(f"{'HH Size':<10} {'Gross (130% FPL)':<20} {'Net (100% FPL)':<18} {'Max Benefit'}")
     print("-" * 65)
-    for size in ["1","2","3","4","5","6","7","8"]:
+    for size in ["1", "2", "3", "4", "5", "6", "7", "8"]:
         row = hh[size]
-        print(f"{size:<10} ${row['gross_monthly']:>8,.0f}/month      ${row['net_monthly']:>8,.0f}/month   ${row['max_benefit']:>6,.0f}")
+        print(
+            f"{size:<10} ${row['gross_monthly']:>8,.0f}/month      "
+            f"${row['net_monthly']:>8,.0f}/month   ${row['max_benefit']:>6,.0f}"
+        )
     ea = hh["each_additional"]
-    print(f"{'Each add.':<10} +${ea['gross_monthly']:>7,.0f}/month      +${ea['net_monthly']:>7,.0f}/month  +${ea['max_benefit']:>5,.0f}")
-    print(f"\nAsset limits: ${data['asset_limit_general']:,} general / ${data['asset_limit_elderly_disabled']:,} elderly+disabled")
+    print(
+        f"{'Each add.':<10} +${ea['gross_monthly']:>7,.0f}/month      "
+        f"+${ea['net_monthly']:>7,.0f}/month  +${ea['max_benefit']:>5,.0f}"
+    )
+    print(
+        f"\nAsset limits: ${data['asset_limit_general']:,} general / "
+        f"${data['asset_limit_elderly_disabled']:,} elderly+disabled"
+    )
     print(f"Standard deduction (HH 1-3): ${data['standard_deductions_48_states_dc']['1']}/month")
     print(f"Excess shelter cap: ${data['excess_shelter_deduction_cap_48_states_dc']}/month")
     print(f"Homeless shelter deduction: ${data['homeless_shelter_deduction']}/month")

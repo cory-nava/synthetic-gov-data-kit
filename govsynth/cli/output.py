@@ -4,6 +4,7 @@ Two patterns:
   emit_json()   — query commands (list-presets, verify-thresholds, show --json) → stdout
   emit_status() — data-producing commands (generate, batch, validate) → stderr envelope
 """
+
 from __future__ import annotations
 
 import json

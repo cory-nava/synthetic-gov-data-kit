@@ -145,9 +145,7 @@ class CatalaRuleset:
         which fields need a `field_mapping` entry.
         """
         scenario_fields = profile.to_scenario_fields()
-        flat: dict[str, Any] = {
-            k: v for k, v in scenario_fields.items() if k != "additional_context"
-        }
+        flat: dict[str, Any] = {k: v for k, v in scenario_fields.items() if k != "additional_context"}
         flat.update(scenario_fields.get("additional_context", {}))
 
         declared = self.input_field_names()

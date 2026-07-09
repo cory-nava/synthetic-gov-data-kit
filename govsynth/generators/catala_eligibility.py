@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
+from govsynth.generators.base import Generator
 from govsynth.models.enums import Difficulty, TaskType
 from govsynth.models.rationale import PolicyCitation, RationaleTrace, ReasoningStep
 from govsynth.models.test_case import ScenarioBlock, TaskBlock, TestCase
@@ -44,7 +45,7 @@ def _coerce_bool(value: object) -> bool:
     return bool(value)
 
 
-class CatalaEligibilityGenerator:
+class CatalaEligibilityGenerator(Generator):
     """Generates eligibility determination test cases from an imported Catala ruleset.
 
     Args:
@@ -101,9 +102,7 @@ class CatalaEligibilityGenerator:
         for i in range(n):
             case_seed = rng.randint(0, 2**31) if seed is not None else None
             try:
-                profile = USHouseholdProfile.random(
-                    state=self.state, seed=case_seed, strategy=strategy
-                )
+                profile = USHouseholdProfile.random(state=self.state, seed=case_seed, strategy=strategy)
                 case = self._build_case(profile, rng, case_seed)
                 cases.append(case)
             except Exception as exc:
@@ -111,9 +110,7 @@ class CatalaEligibilityGenerator:
 
         return cases
 
-    def _build_case(
-        self, profile: USHouseholdProfile, rng: random.Random, seed: int | None
-    ) -> TestCase:
+    def _build_case(self, profile: USHouseholdProfile, rng: random.Random, seed: int | None) -> TestCase:
         result = self.ruleset.run(profile, with_trace=True)
         is_eligible = _coerce_bool(result.outputs.get(self.ruleset.outcome_field))
         outcome = "eligible" if is_eligible else "ineligible"
@@ -143,8 +140,7 @@ class CatalaEligibilityGenerator:
             rationale_trace=trace,
             variation_tags=["catala_import", self.ruleset.scope],
             source_citations=[
-                self.ruleset.citation
-                or f"Catala ruleset: {self.ruleset.path.name}, scope '{self.ruleset.scope}'"
+                self.ruleset.citation or f"Catala ruleset: {self.ruleset.path.name}, scope '{self.ruleset.scope}'"
             ],
             seed=seed,
             metadata={
@@ -160,18 +156,9 @@ class CatalaEligibilityGenerator:
     def jurisdiction_slug(self) -> str:
         return self.state.lower()
 
-    def _build_rationale_trace(
-        self, profile: USHouseholdProfile, result: CatalaResult
-    ) -> RationaleTrace:
-        citation = (
-            self.ruleset.citation
-            or f"Catala ruleset {self.ruleset.path.name}, scope '{self.ruleset.scope}'"
-        )
-        policy_basis = [
-            PolicyCitation(
-                document=citation, section=self.ruleset.scope, year=self.ruleset.citation_year
-            )
-        ]
+    def _build_rationale_trace(self, profile: USHouseholdProfile, result: CatalaResult) -> RationaleTrace:
+        citation = self.ruleset.citation or f"Catala ruleset {self.ruleset.path.name}, scope '{self.ruleset.scope}'"
+        policy_basis = [PolicyCitation(document=citation, section=self.ruleset.scope, year=self.ruleset.citation_year)]
 
         steps = self._trace_to_steps(result.trace)
         if len(steps) < 2:
@@ -185,8 +172,7 @@ class CatalaEligibilityGenerator:
                     rule_applied=citation,
                     inputs=self.ruleset.build_inputs(profile),
                     computation=(
-                        f"Ran scope '{self.ruleset.scope}' from {self.ruleset.path.name} "
-                        f"with the household's inputs."
+                        f"Ran scope '{self.ruleset.scope}' from {self.ruleset.path.name} with the household's inputs."
                     ),
                     result="Computation completed",
                     is_determinative=False,
@@ -196,19 +182,14 @@ class CatalaEligibilityGenerator:
                     title=f"Read '{self.ruleset.outcome_field}' output",
                     rule_applied=citation,
                     inputs={"outputs": result.outputs},
-                    computation=(
-                        f"Scope output '{self.ruleset.outcome_field}' determines eligibility."
-                    ),
+                    computation=(f"Scope output '{self.ruleset.outcome_field}' determines eligibility."),
                     result=str(result.outputs.get(self.ruleset.outcome_field)),
                     is_determinative=True,
                 ),
             ]
 
         is_eligible = _coerce_bool(result.outputs.get(self.ruleset.outcome_field))
-        conclusion = (
-            f"{'ELIGIBLE' if is_eligible else 'INELIGIBLE'} per Catala scope "
-            f"'{self.ruleset.scope}'."
-        )
+        conclusion = f"{'ELIGIBLE' if is_eligible else 'INELIGIBLE'} per Catala scope '{self.ruleset.scope}'."
         return RationaleTrace(steps=steps, conclusion=conclusion, policy_basis=policy_basis)
 
     def _trace_to_steps(self, trace_events: list[dict[str, Any]]) -> list[ReasoningStep]:
@@ -231,10 +212,7 @@ class CatalaEligibilityGenerator:
                 or f"Rule application {i}"
             )
             rule_applied = str(
-                event.get("rule")
-                or event.get("position")
-                or event.get("justification")
-                or self.ruleset.scope
+                event.get("rule") or event.get("position") or event.get("justification") or self.ruleset.scope
             )
             value = event.get("value", event.get("result"))
             computation = str(event.get("justification") or event.get("expression") or title)

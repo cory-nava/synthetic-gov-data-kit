@@ -1,4 +1,5 @@
 """govsynth list-presets command."""
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -20,13 +21,15 @@ def list_presets(
     presets_data = []
     for name, cfg in sorted(PRESETS.items()):
         state = cfg.generator_kwargs.get("state", "national")
-        presets_data.append({
-            "preset": name,
-            "program": cfg.program,
-            "state": state,
-            "strategy": cfg.profile_strategy,
-            "description": cfg.description,
-        })
+        presets_data.append(
+            {
+                "preset": name,
+                "program": cfg.program,
+                "state": state,
+                "strategy": cfg.profile_strategy,
+                "description": cfg.description,
+            }
+        )
 
     if as_json:
         emit_json(presets_data)

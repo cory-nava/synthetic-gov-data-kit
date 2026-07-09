@@ -7,19 +7,21 @@ Usage:
     from govsynth.presets import PRESETS
     config = PRESETS["snap.va"]
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
 @dataclass
 class PresetConfig:
     """Configuration bundle for a Pipeline preset."""
+
     program: str
-    source_class: str          # dotted import path
+    source_class: str  # dotted import path
     source_kwargs: dict[str, Any]
-    generator_class: str       # dotted import path
+    generator_class: str  # dotted import path
     generator_kwargs: dict[str, Any]
     profile_strategy: str = "edge_saturated"
     description: str = ""
@@ -30,7 +32,6 @@ class PresetConfig:
 # ---------------------------------------------------------------------------
 
 PRESETS: dict[str, PresetConfig] = {
-
     # ── SNAP ──────────────────────────────────────────────────────────────
     "snap.va": PresetConfig(
         program="snap",
@@ -68,7 +69,6 @@ PRESETS: dict[str, PresetConfig] = {
         profile_strategy="edge_saturated",
         description="Maryland SNAP FY2026 — BBCE state",
     ),
-
     # ── WIC ───────────────────────────────────────────────────────────────
     "wic.national": PresetConfig(
         program="wic",
@@ -78,6 +78,25 @@ PRESETS: dict[str, PresetConfig] = {
         generator_kwargs={"fiscal_year": 2026},
         profile_strategy="edge_saturated",
         description="WIC FY2026 national income eligibility (185% FPL)",
+    ),
+    # ── Medicaid ──────────────────────────────────────────────────────────
+    "medicaid.va": PresetConfig(
+        program="medicaid",
+        source_class="govsynth.sources.us.medicaid.MedicaidSource",
+        source_kwargs={"calendar_year": 2026, "state": "VA"},
+        generator_class="govsynth.generators.medicaid_eligibility.MedicaidEligibilityGenerator",
+        generator_kwargs={"calendar_year": 2026, "state": "VA"},
+        profile_strategy="edge_saturated",
+        description="Virginia Medicaid CY2026 — ACA expansion state (adults to 138% FPL)",
+    ),
+    "medicaid.tx": PresetConfig(
+        program="medicaid",
+        source_class="govsynth.sources.us.medicaid.MedicaidSource",
+        source_kwargs={"calendar_year": 2026, "state": "TX"},
+        generator_class="govsynth.generators.medicaid_eligibility.MedicaidEligibilityGenerator",
+        generator_kwargs={"calendar_year": 2026, "state": "TX"},
+        profile_strategy="edge_saturated",
+        description="Texas Medicaid CY2026 — non-expansion state (adult coverage gap)",
     ),
 }
 

@@ -19,10 +19,12 @@ Usage:
     print(score.overall)       # 0.85
     print(score.rule_accuracy) # 1.0
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from govsynth.models.rationale import RationaleTrace
 from govsynth.models.test_case import TestCase
@@ -81,8 +83,7 @@ class RationaleEvaluator:
         rule_weight: float = 0.30,
         conclusion_weight: float = 0.35,
     ) -> None:
-        assert abs(step_weight + rule_weight + conclusion_weight - 1.0) < 0.001, \
-            "Weights must sum to 1.0"
+        assert abs(step_weight + rule_weight + conclusion_weight - 1.0) < 0.001, "Weights must sum to 1.0"
         self.step_weight = step_weight
         self.rule_weight = rule_weight
         self.conclusion_weight = conclusion_weight
@@ -104,11 +105,7 @@ class RationaleEvaluator:
         rule_acc, cited, missing = self._score_rule_accuracy(trace, output_lower)
         conclusion, predicted = self._score_conclusion(case.expected_outcome, output_lower)
 
-        overall = (
-            self.step_weight * step_cov
-            + self.rule_weight * rule_acc
-            + self.conclusion_weight * conclusion
-        )
+        overall = self.step_weight * step_cov + self.rule_weight * rule_acc + self.conclusion_weight * conclusion
 
         return RationaleScore(
             case_id=case.case_id,
@@ -124,14 +121,12 @@ class RationaleEvaluator:
             expected_outcome=case.expected_outcome,
         )
 
-    def score_batch(
-        self, cases: list[TestCase], model_outputs: list[str]
-    ) -> list[RationaleScore]:
+    def score_batch(self, cases: list[TestCase], model_outputs: list[str]) -> list[RationaleScore]:
         """Score a batch of (case, output) pairs."""
         assert len(cases) == len(model_outputs), "cases and outputs must have same length"
-        return [self.score(c, o) for c, o in zip(cases, model_outputs)]
+        return [self.score(c, o) for c, o in zip(cases, model_outputs, strict=False)]
 
-    def summary_stats(self, scores: list[RationaleScore]) -> dict:
+    def summary_stats(self, scores: list[RationaleScore]) -> dict[str, Any]:
         """Compute aggregate stats over a list of scores."""
         if not scores:
             return {}
@@ -150,9 +145,7 @@ class RationaleEvaluator:
     # Component scorers
     # ------------------------------------------------------------------
 
-    def _score_step_coverage(
-        self, trace: RationaleTrace, output_lower: str
-    ) -> tuple[float, list[str], list[str]]:
+    def _score_step_coverage(self, trace: RationaleTrace, output_lower: str) -> tuple[float, list[str], list[str]]:
         """Check whether the model's output covers the key reasoning steps."""
         covered: list[str] = []
         missed: list[str] = []
@@ -168,9 +161,7 @@ class RationaleEvaluator:
         score = len(covered) / len(trace.steps) if trace.steps else 0.0
         return score, covered, missed
 
-    def _score_rule_accuracy(
-        self, trace: RationaleTrace, output_lower: str
-    ) -> tuple[float, list[str], list[str]]:
+    def _score_rule_accuracy(self, trace: RationaleTrace, output_lower: str) -> tuple[float, list[str], list[str]]:
         """Check whether the model cited the correct CFR/policy rules."""
         all_rules = trace.cited_rules()
         if not all_rules:
@@ -192,7 +183,7 @@ class RationaleEvaluator:
                     missing.append(rule)
             else:
                 # Fallback: check if any 5-char substring of rule appears in output
-                if any(rule_lower[i:i+6] in output_lower for i in range(len(rule_lower) - 5)):
+                if any(rule_lower[i : i + 6] in output_lower for i in range(len(rule_lower) - 5)):
                     cited.append(rule)
                 else:
                     missing.append(rule)
@@ -200,23 +191,42 @@ class RationaleEvaluator:
         score = len(cited) / len(all_rules) if all_rules else 1.0
         return score, cited, missing
 
-    def _score_conclusion(
-        self, expected_outcome: str, output_lower: str
-    ) -> tuple[float, str]:
+    def _score_conclusion(self, expected_outcome: str, output_lower: str) -> tuple[float, str]:
         """Check whether the model reached the correct conclusion."""
         expected = expected_outcome.lower().strip()
 
         # Look for clear eligibility signal words
         eligible_signals = [
-            "eligible", "qualifies", "qualify", "approved", "meets the requirements"
+            "eligible",
+            "qualifies",
+            "qualify",
+            "approved",
+            "meets the requirements",
         ]
         ineligible_signals = [
-            "ineligible", "does not qualify", "not eligible", "denied",
-            "exceeds", "over the limit", "too high"
+            "ineligible",
+            "does not qualify",
+            "not eligible",
+            "denied",
+            "exceeds",
+            "over the limit",
+            "too high",
         ]
 
-        found_eligible = any(sig in output_lower for sig in eligible_signals)
-        found_ineligible = any(sig in output_lower for sig in ineligible_signals)
+        # Word-boundary match: "eligible" is a substring of "ineligible", so a
+        # naive `sig in output_lower` check would treat every "ineligible"
+        # mention as also asserting "eligible", collapsing correct
+        # conclusions into false "ambiguous" scores.
+        found_ineligible = any(re.search(rf"\b{re.escape(sig)}\b", output_lower) for sig in ineligible_signals)
+
+        # Strip matched negated phrases (e.g. "does not qualify", "not eligible")
+        # before checking eligible_signals, so a bare positive word swallowed
+        # inside a negated phrase (e.g. "qualify" inside "does not qualify")
+        # doesn't also register as a positive signal.
+        stripped = output_lower
+        for sig in ineligible_signals:
+            stripped = re.sub(rf"\b{re.escape(sig)}\b", " ", stripped)
+        found_eligible = any(re.search(rf"\b{re.escape(sig)}\b", stripped) for sig in eligible_signals)
 
         if expected == "eligible":
             if found_eligible and not found_ineligible:

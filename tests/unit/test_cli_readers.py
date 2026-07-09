@@ -1,34 +1,35 @@
 """Tests for govsynth.cli.readers — file deserialization."""
-from pathlib import Path
-import pytest
 
+from pathlib import Path
+
+import pytest
 from govsynth.cli.readers import detect_format, read_yaml
 
 
-def test_detect_format_yaml():
+def test_detect_format_yaml() -> None:
     assert detect_format(Path("output.yaml")) == "yaml"
     assert detect_format(Path("output.yml")) == "yaml"
 
 
-def test_detect_format_jsonl():
+def test_detect_format_jsonl() -> None:
     assert detect_format(Path("cases.jsonl")) == "jsonl"
 
 
-def test_detect_format_csv():
+def test_detect_format_csv() -> None:
     assert detect_format(Path("cases.csv")) == "csv"
 
 
-def test_detect_format_force_overrides_extension():
+def test_detect_format_force_overrides_extension() -> None:
     assert detect_format(Path("cases.txt"), force="yaml") == "yaml"
 
 
-def test_detect_format_unknown_extension_raises():
+def test_detect_format_unknown_extension_raises() -> None:
     with pytest.raises(SystemExit) as exc_info:
         detect_format(Path("cases.txt"))
     assert exc_info.value.code == 2
 
 
-def test_read_yaml_returns_test_cases(tmp_path):
+def test_read_yaml_returns_test_cases(tmp_path: Path) -> None:
     """read_yaml can round-trip a YAML file written by YAMLFormatter."""
     from govsynth.pipeline import Pipeline
 
@@ -44,4 +45,4 @@ def test_read_yaml_returns_test_cases(tmp_path):
     original_ids = {c.case_id for c in cases}
     assert loaded[0].case_id in original_ids
     # Confirm full round-trip: the deserialized case must pass schema validation
-    assert loaded[0].is_valid(), f"Round-tripped case failed validation: {loaded[0].validate()}"
+    assert loaded[0].is_valid(), f"Round-tripped case failed validation: {loaded[0].check_output_contract()}"

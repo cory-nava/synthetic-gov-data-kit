@@ -40,9 +40,7 @@ def _install_fake_catala(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "run", fake_run)
 
 
-def test_generate_catala_writes_yaml_files(
-    ruleset_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_generate_catala_writes_yaml_files(ruleset_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_catala(monkeypatch)
     out_dir = tmp_path / "out"
     result = runner.invoke(
@@ -67,9 +65,7 @@ def test_generate_catala_writes_yaml_files(
     assert len(yaml_files) == 5
 
 
-def test_generate_catala_json_status(
-    ruleset_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_generate_catala_json_status(ruleset_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_catala(monkeypatch)
     out_dir = tmp_path / "out"
     result = runner.invoke(
@@ -175,9 +171,7 @@ def test_generate_catala_bad_field_mapping_syntax_exits_nonzero(
     assert result.exit_code != 0
 
 
-def test_generate_catala_unmapped_field_exits_two(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_generate_catala_unmapped_field_exits_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ruleset_path = tmp_path / "other.catala_en"
     ruleset_path.write_text("# ruleset")
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")

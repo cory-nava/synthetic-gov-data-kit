@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 import typer
@@ -85,9 +85,7 @@ def refresh_census_data(
     api_key: str | None = os.environ.get("CENSUS_API_KEY")
 
     if state is not None and state.upper() not in _ALL_STATES:
-        console.print(
-            f"[red]Error:[/red] Unknown state '{state}'. Use a two-letter US state/DC code."
-        )
+        console.print(f"[red]Error:[/red] Unknown state '{state}'. Use a two-letter US state/DC code.")
         raise typer.Exit(2)
 
     states = [state.upper()] if state else list(_ALL_STATES)
@@ -110,7 +108,7 @@ def refresh_census_data(
     if dry_run:
         for s in states:
             out_path = str(_DATA_DIR / f"{s.lower()}.json")
-            msg: dict = {
+            msg: dict[str, Any] = {
                 "command": "refresh-census-data",
                 "state": s,
                 "status": "dry_run",
@@ -169,7 +167,7 @@ def refresh_census_data(
                 except Exception:
                     pass
             failed.append(s)
-            err: dict = {
+            err: dict[str, Any] = {
                 "command": "refresh-census-data",
                 "state": s,
                 "status": "error",
@@ -193,9 +191,17 @@ def refresh_census_data(
             else:
                 console.print(f"[red]✗[/red] {s}: {exc}")
 
+    if ok:
+        # Invalidate the in-process JSON cache so any CensusDataSource used
+        # later in this same process (e.g. a notebook or long-lived script)
+        # sees the freshly written files instead of stale cached data.
+        from govsynth.sources.us.census import _load_census_json_cached
+
+        _load_census_json_cached.cache_clear()
+
     # Summary line
     status = "ok" if not failed else ("partial" if ok else "error")
-    summary: dict = {
+    summary: dict[str, Any] = {
         "command": "refresh-census-data",
         "summary": {"total": len(states), "ok": len(ok), "failed": len(failed)},
         "status": status,
@@ -204,9 +210,7 @@ def refresh_census_data(
         print(json.dumps(summary), file=sys.stderr)
     else:
         if failed:
-            console.print(
-                f"[yellow]Warning:[/yellow] {len(failed)} state(s) failed: {', '.join(failed)}"
-            )
+            console.print(f"[yellow]Warning:[/yellow] {len(failed)} state(s) failed: {', '.join(failed)}")
         console.print(f"[green]Done:[/green] {len(ok)}/{len(states)} states refreshed.")
 
     if failed and not ok:

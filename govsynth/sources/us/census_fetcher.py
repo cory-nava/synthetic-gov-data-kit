@@ -15,6 +15,7 @@ import math
 import os
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -114,7 +115,7 @@ _INCOME_BRACKET_LABELS = [
 ]
 
 
-def fit_lognormal(buckets: list[dict]) -> tuple[float, float]:
+def fit_lognormal(buckets: list[dict[str, Any]]) -> tuple[float, float]:
     """Fit lognormal (mu, sigma) to ACS income bracket weights.
 
     Uses method of moments on log-transformed monthly midpoints.
@@ -139,7 +140,7 @@ def fit_lognormal(buckets: list[dict]) -> tuple[float, float]:
     return round(mu, 4), round(sigma, 4)
 
 
-def _get(client: httpx.Client, url: str, params: dict) -> list[list[str]]:
+def _get(client: httpx.Client, url: str, params: dict[str, Any]) -> list[list[str]]:
     """Make one Census API GET; return parsed JSON rows."""
     resp = client.get(url, params=params, timeout=30)
     resp.raise_for_status()
@@ -160,7 +161,7 @@ def _safe_rate(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4) if denominator > 0 else 0.0
 
 
-def fetch_state(state: str, year: int, api_key: str | None) -> dict:
+def fetch_state(state: str, year: int, api_key: str | None) -> dict[str, Any]:
     """Fetch all ACS tables for one state (~6 HTTP requests).
 
     Args:
@@ -192,11 +193,7 @@ def fetch_state(state: str, year: int, api_key: str | None) -> dict:
         poverty_rows = _get(client, base_url, {**base_params, "get": poverty_vars})
 
         # B25064: Median gross rent; B25070: Rent burden; B25003: Tenure
-        housing_vars = (
-            "B25064_001E,"
-            "B25070_007E,B25070_008E,B25070_009E,B25070_010E,B25070_001E,"
-            "B25003_003E,B25003_001E"
-        )
+        housing_vars = "B25064_001E,B25070_007E,B25070_008E,B25070_009E,B25070_010E,B25070_001E,B25003_003E,B25003_001E"
         housing_rows = _get(client, base_url, {**base_params, "get": housing_vars})
 
         # Household size (B11016), children (B11003), age (B01001),
@@ -243,7 +240,7 @@ def _idx(header: list[str], var: str) -> int:
     return header.index(var)
 
 
-def build_state_census_json(state: str, year: int, api_key: str | None) -> dict:
+def build_state_census_json(state: str, year: int, api_key: str | None) -> dict[str, Any]:
     """Fetch ACS data for one state and build the census JSON dict.
 
     Args:
@@ -434,7 +431,7 @@ def build_state_census_json(state: str, year: int, api_key: str | None) -> dict:
     }
 
 
-def write_state_file(state: str, data: dict, data_dir: Path) -> Path:
+def write_state_file(state: str, data: dict[str, Any], data_dir: Path) -> Path:
     """Write state census JSON atomically (tmp file -> os.replace).
 
     Args:

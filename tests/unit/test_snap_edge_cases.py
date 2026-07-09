@@ -1,11 +1,9 @@
 import random
 
-import pytest
-
 from govsynth.generators.snap_eligibility import SNAPEligibilityGenerator
 
 
-def test_homeless_shelter_deduction():
+def test_homeless_shelter_deduction() -> None:
     """Homeless case uses flat $198.99 deduction, not excess shelter calculation."""
     gen = SNAPEligibilityGenerator(state="VA")
     rng = random.Random(42)
@@ -23,7 +21,7 @@ def test_homeless_shelter_deduction():
             assert "273.9(c)(6)" in step.rule_applied
 
 
-def test_student_exclusion():
+def test_student_exclusion() -> None:
     """Student enrolled half-time is INELIGIBLE regardless of income level."""
     gen = SNAPEligibilityGenerator(state="VA")
     rng = random.Random(42)
@@ -33,10 +31,7 @@ def test_student_exclusion():
     assert case.expected_outcome == "ineligible"
     assert case.is_valid()
     # Rationale must mention checking exceptions under 273.5(b)
-    full_rationale = " ".join(
-        (step.computation or "") + " " + (step.note or "")
-        for step in case.rationale_trace.steps
-    )
+    " ".join((step.computation or "") + " " + (step.note or "") for step in case.rationale_trace.steps)
     assert "273.5" in " ".join(step.rule_applied for step in case.rationale_trace.steps)
     # Income test must NOT be the determinative step — student check fires first
     determinative_steps = [s for s in case.rationale_trace.steps if s.is_determinative]
@@ -46,7 +41,7 @@ def test_student_exclusion():
     assert "273.5" in first_det.rule_applied
 
 
-def test_boarder_income_proration():
+def test_boarder_income_proration() -> None:
     """Only profit portion of board payments counts as income."""
     gen = SNAPEligibilityGenerator(state="VA")
     rng = random.Random(42)
@@ -59,7 +54,7 @@ def test_boarder_income_proration():
     assert ctx.get("is_boarder") is True or ctx.get("boarder_income") is not None
 
 
-def test_migrant_income_averaging():
+def test_migrant_income_averaging() -> None:
     """Seasonal income is averaged over work period, not current-month snapshot."""
     gen = SNAPEligibilityGenerator(state="VA")
     rng = random.Random(42)
@@ -71,7 +66,7 @@ def test_migrant_income_averaging():
     assert ctx.get("is_migrant_worker") is True or ctx.get("seasonal_total") is not None
 
 
-def test_mixed_immigration_status_hh_size_reduction():
+def test_mixed_immigration_status_hh_size_reduction() -> None:
     """Ineligible members excluded from HH size for limit lookup; income counts in full."""
     gen = SNAPEligibilityGenerator(state="VA")
     rng = random.Random(42)
@@ -81,8 +76,7 @@ def test_mixed_immigration_status_hh_size_reduction():
     assert case.is_valid()
     # Rationale must show HH size reduction (not income proration)
     full_rationale = " ".join(
-        (step.computation or "") + " " + (step.note or "")
-        for step in case.rationale_trace.steps
+        (step.computation or "") + " " + (step.note or "") for step in case.rationale_trace.steps
     ).lower()
     # Should mention size reduction
     assert "size" in full_rationale or "household size" in full_rationale
@@ -90,7 +84,7 @@ def test_mixed_immigration_status_hh_size_reduction():
     assert "prorate" not in full_rationale or "income" not in full_rationale
 
 
-def test_categorical_eligibility_tanf_ssi():
+def test_categorical_eligibility_tanf_ssi() -> None:
     """TANF/SSI recipient is ELIGIBLE even if income exceeds normal limits."""
     gen = SNAPEligibilityGenerator(state="VA")
     rng = random.Random(42)
@@ -101,8 +95,7 @@ def test_categorical_eligibility_tanf_ssi():
     assert case.is_valid()
     # Rationale must show income test was skipped
     full_rationale = " ".join(
-        (step.computation or "") + " " + (step.note or "")
-        for step in case.rationale_trace.steps
+        (step.computation or "") + " " + (step.note or "") for step in case.rationale_trace.steps
     ).lower()
     # Should mention categorical eligibility or income test skipped
     assert "categor" in full_rationale or "tanf" in full_rationale or "ssi" in full_rationale

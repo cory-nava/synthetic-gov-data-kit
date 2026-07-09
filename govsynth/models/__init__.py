@@ -1,14 +1,14 @@
 """Core data models for synthetic-gov-data-kit."""
 
 from govsynth.models.enums import (
+    KNOWN_PROGRAMS,
+    US_STATE_CODES,
     CitizenshipStatus,
     Difficulty,
-    KNOWN_PROGRAMS,
     OutputFormat,
     ProfileStrategy,
     Program,
     TaskType,
-    US_STATE_CODES,
 )
 from govsynth.models.rationale import PolicyCitation, RationaleTrace, ReasoningStep
 from govsynth.models.test_case import ScenarioBlock, TaskBlock, TestCase

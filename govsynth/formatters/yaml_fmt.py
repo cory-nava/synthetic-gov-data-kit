@@ -31,14 +31,12 @@ def _case_to_dict(case: TestCase) -> dict[str, Any]:
             "has_elderly_or_disabled": case.scenario.has_elderly_or_disabled,
             "has_dependent_children": case.scenario.has_dependent_children,
             "citizenship_status": case.scenario.citizenship_status,
-            **({"additional_context": case.scenario.additional_context}
-               if case.scenario.additional_context else {}),
+            **({"additional_context": case.scenario.additional_context} if case.scenario.additional_context else {}),
         },
         "task": {
             "instruction": case.task.instruction,
             **({"portal": case.task.portal} if case.task.portal else {}),
-            **({"documents_available": case.task.documents_available}
-               if case.task.documents_available else {}),
+            **({"documents_available": case.task.documents_available} if case.task.documents_available else {}),
         },
         "expected_outcome": case.expected_outcome,
         "expected_answer": case.expected_answer,
@@ -81,7 +79,7 @@ class YAMLFormatter:
     def format_one(self, case: TestCase) -> str:
         """Serialize a single TestCase to a YAML string."""
         d = _case_to_dict(case)
-        return yaml.dump(d, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return str(yaml.dump(d, default_flow_style=False, allow_unicode=True, sort_keys=False))
 
     def write_one(self, case: TestCase, path: str | Path) -> None:
         """Write a single TestCase to a YAML file."""

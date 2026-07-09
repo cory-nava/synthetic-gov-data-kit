@@ -11,8 +11,15 @@ Quick start:
     pipeline.save(cases, "./output/", formats=["yaml", "jsonl", "csv"])
 """
 
-from govsynth.pipeline import BatchPipeline, Pipeline
-from govsynth.presets import PRESETS, list_presets
+from govsynth.evaluation import RationaleEvaluator, RationaleScore
+from govsynth.fiscal_year import (
+    DEFAULT_MEDICAID_CY,
+    DEFAULT_SNAP_FY,
+    DEFAULT_WIC_FY,
+    FiscalYearConfig,
+    current_federal_fy,
+    fpl_year_for_program,
+)
 from govsynth.models import (
     Difficulty,
     OutputFormat,
@@ -26,14 +33,8 @@ from govsynth.models import (
     TaskType,
     TestCase,
 )
-from govsynth.fiscal_year import (
-    FiscalYearConfig,
-    current_federal_fy,
-    fpl_year_for_program,
-    DEFAULT_SNAP_FY,
-    DEFAULT_WIC_FY,
-    DEFAULT_MEDICAID_CY,
-)
+from govsynth.pipeline import BatchPipeline, Pipeline
+from govsynth.presets import PRESETS, list_presets
 
 __version__ = "0.1.0"
 
@@ -63,7 +64,7 @@ __all__ = [
     "DEFAULT_SNAP_FY",
     "DEFAULT_WIC_FY",
     "DEFAULT_MEDICAID_CY",
+    # Evaluation
+    "RationaleEvaluator",
+    "RationaleScore",
 ]
-
-# Evaluation
-from govsynth.evaluation import RationaleEvaluator, RationaleScore

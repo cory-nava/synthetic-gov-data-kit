@@ -201,23 +201,12 @@ class USHouseholdProfile:
         age_desc = f"{self.age_of_head}-year-old"
         hh_desc = _household_description(self.household_size, self.has_dependent_children)
         income_desc = f"${self.monthly_gross_income:,.0f}/month gross income"
-        asset_desc = (
-            f"${self.liquid_assets:,.0f} in savings"
-            if self.liquid_assets > 0
-            else "no significant savings"
-        )
-        elderly_desc = (
-            " One household member is elderly (age 60+) or disabled."
-            if self.has_elderly_or_disabled
-            else ""
-        )
+        asset_desc = f"${self.liquid_assets:,.0f} in savings" if self.liquid_assets > 0 else "no significant savings"
+        elderly_desc = " One household member is elderly (age 60+) or disabled." if self.has_elderly_or_disabled else ""
         citizenship_desc = (
             ""
             if self.citizenship_status == CitizenshipStatus.CITIZEN
-            else (
-                f" {self.head_of_household_name} is a"
-                f" {self.citizenship_status.value.replace('_', ' ')}."
-            )
+            else (f" {self.head_of_household_name} is a {self.citizenship_status.value.replace('_', ' ')}.")
         )
 
         return (

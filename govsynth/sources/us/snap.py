@@ -9,6 +9,7 @@ FISCAL YEAR:
   FY2026 = Oct 1, 2025 – Sep 30, 2026 (current as of March 2026).
   FY2026 thresholds use the 2025 HHS poverty guidelines as their basis.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -19,20 +20,73 @@ from govsynth.sources.base import DataSource, HouseholdThreshold, ProgramThresho
 # States with broad-based categorical eligibility (BBCE) — no/relaxed asset test.
 # Source: USDA FNS State Options Report, FY2025 (updated periodically)
 BBCE_STATES: set[str] = {
-    "AK","CA","CO","CT","DC","DE","FL","GA","HI","IL","IN",
-    "KY","LA","ME","MD","MA","MI","MN","MT","NE","NV","NH",
-    "NJ","NM","NY","NC","ND","OH","OR","PA","RI","SC","TN",
-    "UT","VT","VA","WA","WI","WY",
+    "AK",
+    "CA",
+    "CO",
+    "CT",
+    "DC",
+    "DE",
+    "FL",
+    "GA",
+    "HI",
+    "IL",
+    "IN",
+    "KY",
+    "LA",
+    "ME",
+    "MD",
+    "MA",
+    "MI",
+    "MN",
+    "MT",
+    "NE",
+    "NV",
+    "NH",
+    "NJ",
+    "NM",
+    "NY",
+    "NC",
+    "ND",
+    "OH",
+    "OR",
+    "PA",
+    "RI",
+    "SC",
+    "TN",
+    "UT",
+    "VT",
+    "VA",
+    "WA",
+    "WI",
+    "WY",
 }
 
 # States that maintain the strict federal asset test
 STRICT_ASSET_TEST_STATES: set[str] = {
-    "TX","MO","SD","WV","KS","AZ","MS","AL","AR","ID","OK",
+    "TX",
+    "MO",
+    "SD",
+    "WV",
+    "KS",
+    "AZ",
+    "MS",
+    "AL",
+    "AR",
+    "ID",
+    "OK",
 }
 
 # Alaska regions for allotment purposes
-ALASKA_RURAL1 = {"Bethel", "Dillingham", "Nome", "Kodiak Island", "Lake and Peninsula",
-                 "Bristol Bay", "Aleutians West", "Aleutians East"}
+ALASKA_RURAL1 = {
+    "Bethel",
+    "Dillingham",
+    "Nome",
+    "Kodiak Island",
+    "Lake and Peninsula",
+    "Bristol Bay",
+    "Aleutians West",
+    "Aleutians East",
+}
 
 
 @lru_cache(maxsize=128)
@@ -43,8 +97,8 @@ def get_standard_deduction(household_size: int, region: str = "48_states_dc") ->
     """
     tables = {
         "48_states_dc": {1: 209, 2: 209, 3: 209, 4: 223, 5: 261},
-        "alaska":        {1: 358, 2: 358, 3: 358, 4: 358, 5: 358},
-        "hawaii":        {1: 295, 2: 295, 3: 295, 4: 295, 5: 300},
+        "alaska": {1: 358, 2: 358, 3: 358, 4: 358, 5: 358},
+        "hawaii": {1: 295, 2: 295, 3: 295, 4: 295, 5: 300},
     }
     six_plus = {"48_states_dc": 299, "alaska": 374, "hawaii": 344}
     t = tables.get(region, tables["48_states_dc"])
@@ -104,11 +158,7 @@ class SNAPSource(DataSource):
         else:
             asset_limit = float(raw["asset_limit_general"])
 
-        std_key = f"standard_deductions_{self._region}"
-        raw_std = raw.get(std_key, raw.get("standard_deductions_48_states_dc", {}))
-        std_deductions = {
-            size: get_standard_deduction(size, self._region) for size in range(1, 9)
-        }
+        std_deductions = {size: get_standard_deduction(size, self._region) for size in range(1, 9)}
 
         shelter_key = f"excess_shelter_deduction_cap_{self._region}"
         shelter_cap = float(raw.get(shelter_key, raw.get("excess_shelter_deduction_cap_48_states_dc", 744)))
@@ -138,12 +188,13 @@ class SNAPSource(DataSource):
 
     def fetch_policy_summary(self) -> str:
         t = self.thresholds()
+        assert t.extra is not None, "SNAP thresholds always populate `extra`"
         bbce = t.extra and t.extra.get("bbce_state", False)
         asset_note = (
             f"No asset test ({self.state} has broad-based categorical eligibility)."
             if bbce
             else f"Asset limits: ${t.asset_limit_general:,.0f} general, "
-                 f"${t.asset_limit_elderly_disabled:,.0f} elderly/disabled (60+ or disabled)."
+            f"${t.asset_limit_elderly_disabled:,.0f} elderly/disabled (60+ or disabled)."
         )
         return (
             f"SNAP Eligibility Rules ({self.fy_config.period_label}, {self.state}):\n"
@@ -174,6 +225,7 @@ class SNAPSource(DataSource):
             raise ValueError("is_homeless and shelter_costs > 0 are mutually exclusive")
 
         t = self.thresholds()
+        assert t.extra is not None, "SNAP thresholds always populate `extra`"
         earned = earned_income if earned_income is not None else gross_income
 
         # (c)(1) Earned income deduction — 20%
@@ -194,11 +246,11 @@ class SNAPSource(DataSource):
         # (c)(5) Shelter deduction — homeless flat deduction or excess shelter calculation
         # Per 7 CFR 273.9(c)(6), these two paths are mutually exclusive.
         if is_homeless:
-            shelter_ded = t.extra["homeless_shelter_deduction"]
+            shelter_ded = float(t.extra["homeless_shelter_deduction"])
         else:
             shelter_ded = 0.0
             if shelter_costs:
-                shelter_cap = t.extra["excess_shelter_cap"] if t.extra else 744.0
+                shelter_cap = float(t.extra["excess_shelter_cap"]) if t.extra else 744.0
                 half_income = max(0.0, after_medical) * 0.5
                 raw_excess = max(0.0, shelter_costs - half_income)
                 shelter_ded = raw_excess if has_elderly_or_disabled else min(raw_excess, shelter_cap)
@@ -222,13 +274,12 @@ class SNAPSource(DataSource):
         limits = t.by_household_size(min(household_size, 8))
 
         # Gross income test — waived for elderly/disabled
-        if not has_elderly_or_disabled:
-            if gross_income > limits.gross_monthly:
-                return False, (
-                    f"Ineligible: gross income ${gross_income:,.2f} exceeds "
-                    f"${limits.gross_monthly:,.2f} (130% FPL, {self.fy_config.period_label}, "
-                    f"{household_size}-person HH)"
-                )
+        if not has_elderly_or_disabled and gross_income > limits.gross_monthly:
+            return False, (
+                f"Ineligible: gross income ${gross_income:,.2f} exceeds "
+                f"${limits.gross_monthly:,.2f} (130% FPL, {self.fy_config.period_label}, "
+                f"{household_size}-person HH)"
+            )
 
         # Net income test
         eff_net = net_income if net_income is not None else gross_income
@@ -240,13 +291,8 @@ class SNAPSource(DataSource):
 
         # Asset test — may be waived by BBCE
         if t.asset_limit_general is not None:
-            asset_cap = (
-                t.asset_limit_elderly_disabled if has_elderly_or_disabled
-                else t.asset_limit_general
-            )
+            asset_cap = t.asset_limit_elderly_disabled if has_elderly_or_disabled else t.asset_limit_general
             if asset_cap and liquid_assets > asset_cap:
-                return False, (
-                    f"Ineligible: assets ${liquid_assets:,.2f} exceed ${asset_cap:,.2f} limit"
-                )
+                return False, (f"Ineligible: assets ${liquid_assets:,.2f} exceed ${asset_cap:,.2f} limit")
 
         return True, "Eligible: all tests passed (gross income, net income, assets)"

@@ -23,9 +23,7 @@ def _completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedPro
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
 
 
-def _mock_schema(
-    monkeypatch: pytest.MonkeyPatch, input_props: dict[str, Any], output_props: dict[str, Any]
-) -> None:
+def _mock_schema(monkeypatch: pytest.MonkeyPatch, input_props: dict[str, Any], output_props: dict[str, Any]) -> None:
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
     input_schema = {"type": "object", "properties": input_props}
     output_schema = {"type": "object", "properties": output_props}
@@ -39,9 +37,7 @@ def _mock_schema(
 
 
 class TestLoad:
-    def test_load_introspects_schema_once(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_load_introspects_schema_once(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         call_count = {"n": 0}
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
 
@@ -62,29 +58,21 @@ class TestLoad:
         assert ruleset.input_field_names() == ["household_size"]
         assert ruleset.output_field_names() == ["eligible"]
 
-    def test_default_citation_year_is_current_year(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_default_citation_year_is_current_year(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import datetime
 
         _mock_schema(monkeypatch, {}, {"eligible": {"type": "boolean"}})
         ruleset = CatalaRuleset.load(ruleset_file, "Eligibility", program_name="liheap")
         assert ruleset.citation_year == datetime.date.today().year
 
-    def test_explicit_citation_year_respected(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_explicit_citation_year_respected(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_schema(monkeypatch, {}, {"eligible": {"type": "boolean"}})
-        ruleset = CatalaRuleset.load(
-            ruleset_file, "Eligibility", program_name="liheap", citation_year=2019
-        )
+        ruleset = CatalaRuleset.load(ruleset_file, "Eligibility", program_name="liheap", citation_year=2019)
         assert ruleset.citation_year == 2019
 
 
 class TestBuildInputs:
-    def test_exact_name_match_is_automatic(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exact_name_match_is_automatic(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_schema(
             monkeypatch,
             {"household_size": {"type": "integer"}, "monthly_gross_income": {"type": "number"}},
@@ -98,9 +86,7 @@ class TestBuildInputs:
             "monthly_gross_income": profile.monthly_gross_income,
         }
 
-    def test_field_mapping_override(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_field_mapping_override(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_schema(monkeypatch, {"income": {"type": "number"}}, {"eligible": {"type": "boolean"}})
         ruleset = CatalaRuleset.load(
             ruleset_file,
@@ -130,9 +116,7 @@ class TestBuildInputs:
         with pytest.raises(CatalaMappingError, match="nonexistent_field"):
             ruleset.build_inputs(profile)
 
-    def test_no_input_fields_returns_empty_dict(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_input_fields_returns_empty_dict(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_schema(monkeypatch, {}, {"eligible": {}})
         ruleset = CatalaRuleset.load(ruleset_file, "Eligibility", program_name="liheap")
         profile = USHouseholdProfile.random(state="VA", seed=1)
@@ -140,12 +124,8 @@ class TestBuildInputs:
 
 
 class TestRun:
-    def test_run_builds_inputs_and_interprets(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _mock_schema(
-            monkeypatch, {"household_size": {"type": "integer"}}, {"eligible": {"type": "boolean"}}
-        )
+    def test_run_builds_inputs_and_interprets(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _mock_schema(monkeypatch, {"household_size": {"type": "integer"}}, {"eligible": {"type": "boolean"}})
         ruleset = CatalaRuleset.load(ruleset_file, "Eligibility", program_name="liheap")
         profile = USHouseholdProfile.random(state="VA", seed=1)
         result = ruleset.run(profile, with_trace=False)

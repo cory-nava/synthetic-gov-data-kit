@@ -33,11 +33,17 @@ def _make_case(program: str) -> TestCase:
         rationale_trace=RationaleTrace(
             steps=[
                 ReasoningStep(
-                    step_number=1, title="Step 1", rule_applied="rule", computation="x",
+                    step_number=1,
+                    title="Step 1",
+                    rule_applied="rule",
+                    computation="x",
                     result="y",
                 ),
                 ReasoningStep(
-                    step_number=2, title="Step 2", rule_applied="rule", computation="x",
+                    step_number=2,
+                    title="Step 2",
+                    rule_applied="rule",
+                    computation="x",
                     result="y",
                 ),
             ],

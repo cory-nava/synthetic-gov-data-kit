@@ -74,9 +74,7 @@ class TestConstruction:
         gen = CatalaEligibilityGenerator(ruleset, state="VA")
         assert gen.program == "liheap"
 
-    def test_bad_mapping_fails_fast_at_construction(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_bad_mapping_fails_fast_at_construction(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
 
         def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -92,26 +90,20 @@ class TestConstruction:
 
 
 class TestGenerate:
-    def test_generate_returns_requested_count(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_generate_returns_requested_count(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_catala(monkeypatch)
         gen = CatalaEligibilityGenerator(_load_ruleset(ruleset_file), state="VA")
         cases = gen.generate(n=8, seed=42)
         assert len(cases) == 8
 
-    def test_all_generated_cases_are_valid(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_all_generated_cases_are_valid(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_catala(monkeypatch)
         gen = CatalaEligibilityGenerator(_load_ruleset(ruleset_file), state="VA")
         cases = gen.generate(n=15, seed=7)
         for case in cases:
             assert case.is_valid(), case.validate()
 
-    def test_generate_is_deterministic_with_seed(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_generate_is_deterministic_with_seed(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_catala(monkeypatch)
         gen = CatalaEligibilityGenerator(_load_ruleset(ruleset_file), state="VA")
         cases1 = gen.generate(n=10, seed=42)
@@ -119,9 +111,7 @@ class TestGenerate:
         assert [c.case_id for c in cases1] == [c.case_id for c in cases2]
         assert [c.expected_outcome for c in cases1] == [c.expected_outcome for c in cases2]
 
-    def test_case_ids_use_ruleset_program_name(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_case_ids_use_ruleset_program_name(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_catala(monkeypatch)
         gen = CatalaEligibilityGenerator(_load_ruleset(ruleset_file), state="VA")
         cases = gen.generate(n=5, seed=1)
@@ -137,17 +127,13 @@ class TestGenerate:
         cases = gen.generate(n=10, seed=1)
         assert all(c.expected_outcome == "eligible" for c in cases)
 
-    def test_source_citations_use_ruleset_citation(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_source_citations_use_ruleset_citation(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_catala(monkeypatch)
         gen = CatalaEligibilityGenerator(_load_ruleset(ruleset_file), state="VA")
         case = gen.generate(n=1, seed=1)[0]
         assert case.source_citations == ["LIHEAP test ruleset"]
 
-    def test_metadata_carries_catala_outputs(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_metadata_carries_catala_outputs(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_catala(monkeypatch)
         gen = CatalaEligibilityGenerator(_load_ruleset(ruleset_file), state="VA")
         case = gen.generate(n=1, seed=1)[0]
@@ -196,9 +182,7 @@ class TestGenerate:
         cases = gen.generate(n=5, seed=1)
         assert len(cases) == 4  # one silently skipped, not a hard failure
 
-    def test_custom_outcome_field(
-        self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_custom_outcome_field(self, ruleset_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/catala")
 
         def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:

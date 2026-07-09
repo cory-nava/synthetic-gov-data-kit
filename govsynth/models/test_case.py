@@ -22,14 +22,10 @@ from govsynth.models.rationale import RationaleTrace
 class ScenarioBlock(BaseModel):
     """The citizen situation presented to the model."""
 
-    summary: str = Field(
-        description="Natural language description of the citizen's situation"
-    )
+    summary: str = Field(description="Natural language description of the citizen's situation")
     household_size: int = Field(ge=1, le=20, description="Number of people in the household")
     monthly_gross_income: float = Field(ge=0, description="Monthly gross income in USD")
-    monthly_net_income: float | None = Field(
-        default=None, description="Monthly net income after deductions in USD"
-    )
+    monthly_net_income: float | None = Field(default=None, description="Monthly net income after deductions in USD")
     liquid_assets: float = Field(default=0.0, ge=0, description="Liquid assets in USD")
     state: str = Field(description="Two-letter US state code, e.g. 'VA'")
     has_elderly_or_disabled: bool = Field(
@@ -47,9 +43,7 @@ class ScenarioBlock(BaseModel):
 class TaskBlock(BaseModel):
     """What the model is asked to do."""
 
-    instruction: str = Field(
-        description="The task instruction presented to the model"
-    )
+    instruction: str = Field(description="The task instruction presented to the model")
     portal: str | None = Field(
         default=None,
         description="For agentic tasks: the portal or system to interact with",
@@ -75,16 +69,10 @@ class TestCase(BaseModel):
     scenario: ScenarioBlock = Field(description="The citizen situation")
     task: TaskBlock = Field(description="The task instruction")
 
-    expected_outcome: str = Field(
-        description="Short outcome label, e.g. 'eligible' or 'ineligible'"
-    )
-    expected_answer: str = Field(
-        description="Full natural language expected answer"
-    )
+    expected_outcome: str = Field(description="Short outcome label, e.g. 'eligible' or 'ineligible'")
+    expected_answer: str = Field(description="Full natural language expected answer")
 
-    rationale_trace: RationaleTrace = Field(
-        description="Step-by-step correct reasoning chain"
-    )
+    rationale_trace: RationaleTrace = Field(description="Step-by-step correct reasoning chain")
 
     variation_tags: list[str] = Field(
         default_factory=list,
@@ -145,8 +133,12 @@ class TestCase(BaseModel):
             raise ValueError("TestCase must have at least one source citation")
         return self
 
-    def validate(self) -> list[str]:
-        """Run compatibility checks. Returns list of error strings (empty = valid)."""
+    def check_output_contract(self) -> list[str]:
+        """Run compatibility checks. Returns list of error strings (empty = valid).
+
+        Named to avoid shadowing pydantic's inherited `BaseModel.validate`
+        classmethod, which has an unrelated signature and purpose.
+        """
         errors: list[str] = []
 
         if not self.case_id:
@@ -168,7 +160,7 @@ class TestCase(BaseModel):
 
     def is_valid(self) -> bool:
         """Quick boolean validity check."""
-        return len(self.validate()) == 0
+        return len(self.check_output_contract()) == 0
 
     def short_repr(self) -> str:
         """One-line summary for logging."""

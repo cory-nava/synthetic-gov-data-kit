@@ -193,9 +193,7 @@ class CatalaRuntime:
         self.binary = find_catala_binary(binary)
         self.timeout = timeout
 
-    def _run(
-        self, args: list[str], stdin_payload: str | None = None
-    ) -> subprocess.CompletedProcess[str]:
+    def _run(self, args: list[str], stdin_payload: str | None = None) -> subprocess.CompletedProcess[str]:
         command = [self.binary, *args]
         try:
             return subprocess.run(
@@ -207,9 +205,7 @@ class CatalaRuntime:
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise CatalaRuntimeError(
-                f"catala subprocess timed out after {self.timeout}s", command
-            ) from exc
+            raise CatalaRuntimeError(f"catala subprocess timed out after {self.timeout}s", command) from exc
         except OSError as exc:
             raise CatalaRuntimeError(f"Failed to execute catala: {exc}", command) from exc
 

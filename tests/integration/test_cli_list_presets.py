@@ -1,31 +1,41 @@
 """Integration tests for govsynth list-presets."""
+
 import json
-from typer.testing import CliRunner
+
 from govsynth.cli.main import app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
 
-def test_list_presets_exits_zero():
+def test_list_presets_exits_zero() -> None:
     result = runner.invoke(app, ["list-presets"])
     assert result.exit_code == 0
 
 
-def test_list_presets_shows_all_presets():
+def test_list_presets_shows_all_presets() -> None:
     result = runner.invoke(app, ["list-presets"])
-    for preset in ["snap.va", "snap.ca", "snap.tx", "snap.md", "wic.national"]:
+    for preset in [
+        "snap.va",
+        "snap.ca",
+        "snap.tx",
+        "snap.md",
+        "wic.national",
+        "medicaid.va",
+        "medicaid.tx",
+    ]:
         assert preset in result.output
 
 
-def test_list_presets_json_is_valid_list():
+def test_list_presets_json_is_valid_list() -> None:
     result = runner.invoke(app, ["list-presets", "--json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert isinstance(data, list)
-    assert len(data) == 5
+    assert len(data) == 7
 
 
-def test_list_presets_json_has_required_fields():
+def test_list_presets_json_has_required_fields() -> None:
     result = runner.invoke(app, ["list-presets", "--json"])
     data = json.loads(result.output)
     for item in data:

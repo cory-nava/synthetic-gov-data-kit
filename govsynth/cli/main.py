@@ -1,4 +1,5 @@
 """Top-level Typer app for govsynth CLI."""
+
 from __future__ import annotations
 
 import typer

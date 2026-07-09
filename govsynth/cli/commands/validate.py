@@ -1,4 +1,5 @@
 """govsynth validate command — validate output files against TestCase schema."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,9 +13,7 @@ from govsynth.cli.readers import detect_format, read_csv_raw, read_jsonl_raw, re
 
 def validate(
     file: Annotated[Path, typer.Argument(help="Output file to validate (.yaml/.jsonl/.csv)")],
-    format_: Annotated[
-        str | None, typer.Option("--format", "-f", help="Force format detection")
-    ] = None,
+    format_: Annotated[str | None, typer.Option("--format", "-f", help="Force format detection")] = None,
     quiet: Annotated[bool, typer.Option("--quiet", "-q")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
@@ -35,7 +34,7 @@ def validate(
 
         total_count = len(cases)
         for case in cases:
-            errs = case.validate()
+            errs = case.check_output_contract()
             if errs:
                 errors.append(f"{case.case_id}: {'; '.join(errs)}")
             else:
@@ -55,10 +54,7 @@ def validate(
             else:
                 missing = required_keys - row.keys()
                 errors.append(f"row missing keys: {missing}")
-        console.print(
-            f"Validating {file.name} (JSONL structural check) ... "
-            f"{valid_count}/{total_count} valid"
-        )
+        console.print(f"Validating {file.name} (JSONL structural check) ... {valid_count}/{total_count} valid")
 
     elif fmt == "csv":
         rows = read_csv_raw(file)
@@ -70,10 +66,7 @@ def validate(
             else:
                 missing = required_cols - row.keys()
                 errors.append(f"row missing columns: {missing}")
-        console.print(
-            f"Validating {file.name} (CSV structural check) ... "
-            f"{valid_count}/{total_count} valid"
-        )
+        console.print(f"Validating {file.name} (CSV structural check) ... {valid_count}/{total_count} valid")
 
     status_data = {
         "status": "ok" if not errors else "invalid",
