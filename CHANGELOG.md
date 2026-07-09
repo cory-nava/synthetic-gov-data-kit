@@ -66,6 +66,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   progress label silently fell back to `"unknown.va"` instead of `"snap.va"`.
 - `notebooks/09_cli_workflow.ipynb` had 12 duplicate `"cell_type"` keys (malformed JSON
   that `json.loads` tolerated silently but broke stricter notebook tooling).
+- **CI mypy failure**: `mypy govsynth/` failed in CI with `Type statement is only supported
+  in Python 3.12 and greater` while parsing numpy's bundled stubs (pulled in transitively
+  via the `hf` extra) — numpy dropped support for Python <3.12 and its stubs now use PEP 695
+  `type` statement syntax unconditionally. Fixed by bumping `[tool.mypy] python_version` to
+  `"3.12"` (the newest CI-tested interpreter, independent of the package's `>=3.10` minimum
+  supported runtime version) and adding `types-PyYAML` to the `dev` extra so the PyYAML
+  stub-missing errors it was masking don't resurface once mypy gets past the numpy blocker.
 - `LICENSE` — added full MIT license text with copyright year and holder
 - `pyproject.toml` — replaced `your-org` placeholder URLs with actual repository paths
 - `CONTRIBUTING.md` — corrected clone URL placeholder
