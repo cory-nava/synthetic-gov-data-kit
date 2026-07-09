@@ -1,4 +1,5 @@
 """Unit tests for CensusDataSource and CensusDistribution."""
+
 from __future__ import annotations
 
 import json
@@ -6,7 +7,6 @@ import warnings
 from pathlib import Path
 
 import pytest
-
 from govsynth.sources.us.census import CensusDataSource, CensusDistribution
 
 _FIXTURE = Path(__file__).parent.parent / "fixtures" / "census_va.json"
@@ -112,8 +112,9 @@ class TestCensusDataSourceLoad:
 class TestFitLognormal:
     def test_single_bracket_zero_sigma(self) -> None:
         """All weight on one bracket -> sigma = 0."""
-        from govsynth.sources.us.census_fetcher import fit_lognormal
         import math
+
+        from govsynth.sources.us.census_fetcher import fit_lognormal
 
         buckets = [{"annual_midpoint": 60000, "weight": 1.0}]
         mu, sigma = fit_lognormal(buckets)
@@ -122,8 +123,9 @@ class TestFitLognormal:
 
     def test_two_brackets_symmetric(self) -> None:
         """Equal weight on two brackets -> mu is the mean of their log-monthly values."""
-        from govsynth.sources.us.census_fetcher import fit_lognormal
         import math
+
+        from govsynth.sources.us.census_fetcher import fit_lognormal
 
         buckets = [
             {"annual_midpoint": 12000, "weight": 0.5},
@@ -153,8 +155,9 @@ class TestFitLognormal:
 
     def test_returns_monthly_scale(self) -> None:
         """mu is monthly (annual / 12), not annual."""
-        from govsynth.sources.us.census_fetcher import fit_lognormal
         import math
+
+        from govsynth.sources.us.census_fetcher import fit_lognormal
 
         buckets = [{"annual_midpoint": 60000, "weight": 1.0}]
         mu, _ = fit_lognormal(buckets)
@@ -165,13 +168,9 @@ class TestFitLognormal:
 class TestRealisticProfile:
     """Tests for USHouseholdProfile.random(strategy='realistic')."""
 
-    def test_returns_profile_with_census_data(
-        self, monkeypatch: pytest.MonkeyPatch, census_dir: Path
-    ) -> None:
+    def test_returns_profile_with_census_data(self, monkeypatch: pytest.MonkeyPatch, census_dir: Path) -> None:
         """With census data present, returns a USHouseholdProfile."""
-        monkeypatch.setattr(
-            "govsynth.sources.us.census._CENSUS_DIR", census_dir
-        )
+        monkeypatch.setattr("govsynth.sources.us.census._CENSUS_DIR", census_dir)
         from govsynth.profiles.us_household import USHouseholdProfile
 
         profile = USHouseholdProfile.random(state="VA", seed=42, strategy="realistic")
@@ -180,9 +179,7 @@ class TestRealisticProfile:
         assert profile.monthly_gross_income > 0
         assert profile.state == "VA"
 
-    def test_realistic_is_deterministic(
-        self, monkeypatch: pytest.MonkeyPatch, census_dir: Path
-    ) -> None:
+    def test_realistic_is_deterministic(self, monkeypatch: pytest.MonkeyPatch, census_dir: Path) -> None:
         """Same seed -> same profile."""
         monkeypatch.setattr("govsynth.sources.us.census._CENSUS_DIR", census_dir)
         from govsynth.profiles.us_household import USHouseholdProfile
@@ -192,13 +189,12 @@ class TestRealisticProfile:
         assert p1.household_size == p2.household_size
         assert p1.monthly_gross_income == p2.monthly_gross_income
 
-    def test_realistic_fallback_when_no_census_data(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_realistic_fallback_when_no_census_data(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """With no data files, falls back gracefully (no exception)."""
         monkeypatch.setattr("govsynth.sources.us.census._CENSUS_DIR", tmp_path)
-        from govsynth.profiles.us_household import USHouseholdProfile
         import warnings
+
+        from govsynth.profiles.us_household import USHouseholdProfile
 
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")

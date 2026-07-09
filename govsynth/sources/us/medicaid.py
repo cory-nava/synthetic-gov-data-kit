@@ -16,11 +16,14 @@ MAGI vs SNAP NET INCOME:
   excludes others (e.g., SNAP standard deductions do NOT apply).
   For Medicaid, income = gross income minus a 5% FPL disregard.
 """
+
 from __future__ import annotations
 
+import copy
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from govsynth.fiscal_year import DEFAULT_MEDICAID_CY, FiscalYearConfig
 from govsynth.sources.base import DataSource, HouseholdThreshold, ProgramThresholds
@@ -29,10 +32,24 @@ _DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "thresholds"
 
 
 @lru_cache(maxsize=16)
-def _load_fpl_json(path_str: str) -> dict:
-    """Cached loader for FPL guidelines JSON."""
+def _load_fpl_json_cached(path_str: str) -> dict[str, Any]:
+    """Cached loader for FPL guidelines JSON.
+
+    Private: returns the same dict object on every call. Use
+    `_load_fpl_json` instead, which hands back a deep copy so callers
+    can't corrupt the shared cache.
+    """
     with open(path_str) as f:
-        return json.load(f)
+        data: dict[str, Any] = json.load(f)
+        return data
+
+
+def _load_fpl_json(path_str: str) -> dict[str, Any]:
+    """Load FPL guidelines JSON with a process-lifetime cache keyed by path.
+
+    Returns a deep copy so callers can't mutate the shared cache.
+    """
+    return copy.deepcopy(_load_fpl_json_cached(path_str))
 
 
 class MedicaidSource(DataSource):
@@ -52,13 +69,13 @@ class MedicaidSource(DataSource):
     def __init__(self, calendar_year: int = DEFAULT_MEDICAID_CY, state: str = "VA") -> None:
         super().__init__(year=calendar_year, state=state)
         self.fy_config = FiscalYearConfig.for_program("medicaid", calendar_year)
-        self._raw: dict | None = None
+        self._raw: dict[str, Any] | None = None
 
     @property
     def program(self) -> str:
         return "medicaid"
 
-    def _load_raw(self) -> dict:
+    def _load_raw(self) -> dict[str, Any]:
         if self._raw is None:
             self._raw = self._load_threshold_json(self.fy_config.threshold_filename)
         return self._raw
@@ -121,12 +138,17 @@ class MedicaidSource(DataSource):
     def fetch_policy_summary(self) -> str:
         expansion = self.is_expansion_state()
         status = "expansion state (covers adults to 138% FPL)" if expansion else "non-expansion state"
+        adult_coverage_note = (
+            "- Adults: covered up to 138% FPL under ACA expansion."
+            if expansion
+            else "- Adults without children: NO coverage (coverage gap)."
+        )
         return (
             f"Medicaid Eligibility Rules (CY{self.year}, {self.state} — {status}):\n"
             f"  [Based on {self.fy_config.fpl_year} HHS poverty guidelines]\n"
             "- Income methodology: MAGI (Modified Adjusted Gross Income) (42 CFR 435.603)\n"
             "- Income ≠ SNAP net income: MAGI has different rules, no SNAP deductions apply.\n"
-            f"{'- Adults: covered up to 138% FPL under ACA expansion.' if expansion else '- Adults without children: NO coverage (coverage gap).'}\n"
+            f"{adult_coverage_note}\n"
             "- Children/pregnant women: higher limits in all states.\n"
             "- No asset test for MAGI-based Medicaid.\n"
             f"Source: {self._load_raw()['_metadata']['source']}"

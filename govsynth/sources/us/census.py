@@ -10,20 +10,38 @@ colocation with other US data modules.
 
 from __future__ import annotations
 
+import copy
 import json
 import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 _CENSUS_DIR = Path(__file__).parent.parent.parent.parent / "data" / "census"
 
 
 @lru_cache(maxsize=64)
-def _load_census_json(path_str: str) -> dict:
-    """Cached JSON loader for census data."""
+def _load_census_json_cached(path_str: str) -> dict[str, Any]:
+    """Cached JSON loader for census data.
+
+    Private: returns the same dict object on every call. Use
+    `_load_census_json` instead, which hands back a deep copy so callers
+    can't corrupt the shared cache. After rewriting a census file
+    in-process (e.g. via `refresh-census-data`), call
+    `_load_census_json_cached.cache_clear()` to avoid serving stale data.
+    """
     with open(path_str, encoding="utf-8") as f:
-        return json.load(f)
+        data: dict[str, Any] = json.load(f)
+        return data
+
+
+def _load_census_json(path_str: str) -> dict[str, Any]:
+    """Load census JSON with a process-lifetime cache keyed by path.
+
+    Returns a deep copy so callers can't mutate the shared cache.
+    """
+    return copy.deepcopy(_load_census_json_cached(path_str))
 
 
 @dataclass
@@ -33,7 +51,7 @@ class CensusDistribution:
     state: str
     income_mu: float
     income_sigma: float
-    fpl_buckets: list[dict]
+    fpl_buckets: list[dict[str, Any]]
     household_size_weights: list[float]
     pct_with_children: float
     pct_elderly_or_disabled: float
@@ -89,7 +107,7 @@ class CensusDataSource:
         return _parse(data)
 
 
-def _parse(data: dict) -> CensusDistribution:
+def _parse(data: dict[str, Any]) -> CensusDistribution:
     """Deserialize a census JSON dict into a CensusDistribution."""
     inc = data["income"]
     hsg = data["housing"]

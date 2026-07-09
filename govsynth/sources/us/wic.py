@@ -17,6 +17,7 @@ CRITICAL CALENDAR NOTE:
     HH5: $5,805  HH6: $6,653  HH7: $7,501  HH8: $8,349
   Source: Federal Register 2025-03576, 90 FR 11598
 """
+
 from __future__ import annotations
 
 from govsynth.fiscal_year import DEFAULT_WIC_FY, FiscalYearConfig
@@ -90,6 +91,7 @@ class WICSource(DataSource):
 
     def fetch_policy_summary(self) -> str:
         t = self.thresholds()
+        assert t.extra is not None, "WIC thresholds always populate `extra`"
         return (
             f"WIC Income Eligibility Guidelines ({t.extra['effective_start']} to "
             f"{t.extra['effective_end']}, {self._region.replace('_', ' ').title()}):\n"
@@ -113,13 +115,11 @@ class WICSource(DataSource):
     ) -> tuple[bool, str]:
         """Determine WIC eligibility. Returns (is_eligible, reason)."""
         t = self.thresholds()
-        valid_cats = (t.extra or {}).get("eligible_categories", [])
+        assert t.extra is not None, "WIC thresholds always populate `extra`"
+        valid_cats = t.extra.get("eligible_categories", [])
 
         if participant_category not in valid_cats:
-            return False, (
-                f"Ineligible: '{participant_category}' is not a WIC-eligible category. "
-                f"Valid: {valid_cats}"
-            )
+            return False, (f"Ineligible: '{participant_category}' is not a WIC-eligible category. Valid: {valid_cats}")
 
         if is_categorically_eligible:
             return True, "Categorically eligible via SNAP/Medicaid/TANF. Income test waived."

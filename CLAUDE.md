@@ -21,18 +21,27 @@ policy reasoning chain. This enables evaluation of *how* a model reasons, not ju
 
 ```
 govsynth/               Main Python package
-  sources/us/           US government data connectors (SNAP, WIC, Medicaid, etc.)
-  profiles/             Synthetic citizen/household profile generators
-  generators/           Test case generators (eligibility, policy_qa, form, agentic)
-  reasoning/            RationaleTrace builders and policy rules engine
-  formatters/           Output serializers (YAML, JSONL, CSV, HuggingFace)
-  evaluation/           Rationale scoring utilities
+  sources/us/           US government data connectors (SNAP, WIC, Medicaid)
+  profiles/             Synthetic citizen/household profile generator (USHouseholdProfile)
+  generators/           Test case generators. base.py defines the Generator ABC;
+                         snap_eligibility.py / wic_eligibility.py / medicaid_eligibility.py
+                         implement it. Currently eligibility-determination only — the
+                         TaskType enum has policy_qa/form/agentic/comparative values for
+                         future generators, but none exist yet.
+  reasoning/             rules_engine.py: shared case-id and threshold-test-step builder
+                         helpers, used by newer generators (Medicaid). SNAP/WIC predate
+                         this module and keep their own already-verified reasoning text
+                         inline rather than being retrofitted onto it.
+  formatters/            Output serializers: yaml_fmt.py, jsonl.py, csv_fmt.py,
+                         hf_dataset.py (requires the `[hf]` extra; datasets/huggingface_hub
+                         are only imported inside it, never at package top level)
+  evaluation/            Rationale scoring utilities (keyword/regex heuristics, no LLM calls)
 
 data/seeds/us/          Bundled policy seed data (income limits, CFR excerpts)
 data/thresholds/        Annually-updated threshold tables (FPL, program limits)
 
 tests/unit/             Unit tests — one file per module
-tests/integration/      Integration tests — end-to-end pipeline runs
+tests/integration/      Integration tests — end-to-end CLI workflow runs
 
 notebooks/              Jupyter notebooks (quickstart, program-specific examples)
 docs/                   Extended documentation
@@ -45,8 +54,8 @@ docs/                   Extended documentation
 | Class | File | Purpose |
 |---|---|---|
 | `DataSource` | `sources/base.py` | Abstract base for all data connectors |
-| `CitizenProfile` | `profiles/base.py` | Abstract base for synthetic applicant profiles |
 | `Generator` | `generators/base.py` | Abstract base for test case generators |
+| `USHouseholdProfile` | `profiles/us_household.py` | Synthetic applicant profile (plain dataclass; no separate base class exists yet — there is currently only one profile type) |
 | `TestCase` | `models/test_case.py` | Core output data structure |
 | `RationaleTrace` | `models/rationale.py` | Step-by-step reasoning chain |
 | `Pipeline` | `pipeline.py` | High-level orchestration |
@@ -79,22 +88,30 @@ class HouseholdProfile(BaseModel):
 
 ### Threshold Tables
 
-All program threshold tables live in `data/thresholds/` as JSON. They are loaded at import time
-by the relevant source connector. The schema is:
+All program threshold tables live in `data/thresholds/` as JSON, e.g. `snap_fy2026.json`.
+They are loaded lazily (on first `.thresholds()` call, cached per-process) by the relevant
+source connector — see `data/thresholds/snap_fy2026.json` for the real shape. Simplified:
 
 ```json
 {
-  "program": "snap",
-  "fiscal_year": 2025,
-  "effective_date": "2024-10-01",
-  "source": "FNS SNAP Income and Resource Limits FY2025",
-  "households": {
-    "1": { "gross_monthly": 1580, "net_monthly": 1215, "max_benefit": 292 },
-    "2": { "gross_monthly": 2137, "net_monthly": 1644, "max_benefit": 535 },
-    ...
+  "_metadata": {
+    "program": "snap",
+    "fiscal_year": 2026,
+    "source": "USDA FNS SNAP FY2026 Cost-of-Living Adjustments Memo (August 13, 2025)",
+    "cfr_reference": "7 CFR 273.9",
+    "verification_status": "verified"
+  },
+  "asset_limit_general": 3000,
+  "households_48_states_dc": {
+    "1": { "gross_monthly": 1696, "net_monthly": 1305, "max_benefit": 298 },
+    "2": { "gross_monthly": 2292, "net_monthly": 1763, "max_benefit": 546 }
   }
 }
 ```
+
+Real files also carry Alaska/Hawaii region variants (`households_alaska`,
+`households_hawaii`) and per-region standard deductions — check the actual JSON before
+assuming a field name.
 
 ### Policy Seeds
 
@@ -135,11 +152,18 @@ To add support for a new US benefits program (e.g., LIHEAP):
 1. **Add threshold data**: `data/thresholds/liheap_2025.json`
 2. **Add seed policy docs**: `data/seeds/us/liheap/` (CFR + agency handbook excerpts)
 3. **Create source connector**: `govsynth/sources/us/liheap.py` extending `DataSource`
-4. **Add program rules** to `govsynth/reasoning/rules_engine.py`
-5. **Add rationale template**: `govsynth/reasoning/templates/liheap_trace.py`
-6. **Register presets** in `govsynth/presets.py`
-7. **Add unit tests**: `tests/unit/test_liheap_source.py`
-8. **Document in** `docs/programs/liheap.md`
+4. **Create generator**: `govsynth/generators/liheap_eligibility.py` extending `Generator`
+   (`govsynth/generators/base.py`); reuse `govsynth/reasoning/rules_engine.py`'s
+   `build_case_id`/`build_short_uid`/`build_threshold_test_step` helpers for the case_id
+   and common "compare amount to threshold" reasoning steps
+5. **Register presets** in `govsynth/presets.py`
+6. **Add unit tests**: `tests/unit/test_liheap_source.py` and
+   `tests/unit/test_liheap_eligibility_generator.py` (include a determinism test —
+   `generate(n, seed=42)` twice, assert identical `case_id`s)
+7. **Document in** `docs/programs/liheap.md`
+
+See `govsynth/generators/medicaid_eligibility.py` for the current reference example of a
+generator built with the `Generator` ABC and `rules_engine` helpers from scratch.
 
 ---
 
@@ -163,9 +187,13 @@ pytest --cov=govsynth --cov-report=html
 
 ## Code Style
 
-- **Formatter**: `ruff format` (line length 100)
+- **Formatter**: `ruff format` (line length 120 — wider than the common 100 because
+  generators build long natural-language rationale/citation f-strings that read worse
+  split across lines; notebooks/ are excluded from lint scope entirely)
 - **Linter**: `ruff check` (see `pyproject.toml` for rules)
 - **Type checker**: `mypy --strict`
+- CI (`.github/workflows/ci.yml`) runs all of the above plus `pytest` on every PR across
+  Python 3.10–3.12 — nothing here is aspirational, it's enforced
 - All public functions and classes must have docstrings
 - Use Google-style docstrings
 
@@ -183,7 +211,7 @@ mypy govsynth/
 
 1. **No real PII ever** — all profiles are synthetic. The `Faker` library is used for names/addresses.
 2. **Policy accuracy matters** — threshold values must match the actual CFR/FNS tables for the given fiscal year. Always cite the source regulation.
-3. **Deterministic with seeds** — all random generation must accept a `seed: int | None` parameter and use it. Tests should use `seed=42`.
+3. **Deterministic with seeds** — all random generation must accept a `seed: int | None` parameter and use it, including case_id suffixes. Use `reasoning.rules_engine.build_short_uid(rng)`, never `uuid.uuid4()`, for a case_id's random suffix — `uuid.uuid4()` ignores the seed and silently breaks `generate(n, seed=42)` reproducibility. Tests should use `seed=42` and, for any generator, include a determinism test that calls `generate()` twice with the same seed and asserts identical `case_id`s.
 4. **Output validity** — generated YAML must be well-formed and all required fields must be present.
 5. **No LLM calls in generation** — the core library generates cases from policy rules, not by calling an LLM. LLM calls are only in optional enrichment utilities (clearly marked).
 
@@ -194,7 +222,7 @@ mypy govsynth/
 ### Loading threshold data
 ```python
 from govsynth.sources.us.snap import SNAPSource
-source = SNAPSource(year=2025, state="VA")
+source = SNAPSource(fiscal_year=2026, state="VA")
 thresholds = source.fetch_thresholds()
 limit = thresholds.by_household_size(3)
 ```

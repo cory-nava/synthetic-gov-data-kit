@@ -27,16 +27,12 @@ class ReasoningStep(BaseModel):
 
     step_number: int = Field(description="1-based step index")
     title: str = Field(description="Short label for this step, e.g. 'Check gross income limit'")
-    rule_applied: str = Field(
-        description="The specific policy rule or CFR section applied at this step"
-    )
+    rule_applied: str = Field(description="The specific policy rule or CFR section applied at this step")
     inputs: dict[str, Any] = Field(
         default_factory=dict,
         description="Key-value pairs of values fed into this step",
     )
-    computation: str = Field(
-        description="What was compared or calculated, in plain language"
-    )
+    computation: str = Field(description="What was compared or calculated, in plain language")
     result: str = Field(description="Outcome of this step, e.g. 'PASS' or 'net_income = $1,651'")
     is_determinative: bool = Field(
         default=False,
@@ -57,12 +53,8 @@ class RationaleTrace(BaseModel):
     are scored.
     """
 
-    steps: list[ReasoningStep] = Field(
-        description="Ordered list of reasoning steps"
-    )
-    conclusion: str = Field(
-        description="Final conclusion summarizing all steps and the outcome"
-    )
+    steps: list[ReasoningStep] = Field(description="Ordered list of reasoning steps")
+    conclusion: str = Field(description="Final conclusion summarizing all steps and the outcome")
     policy_basis: list[PolicyCitation] = Field(
         default_factory=list,
         description="Policy documents and regulations that ground this trace",

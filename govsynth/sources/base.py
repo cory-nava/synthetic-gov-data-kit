@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import copy
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 THRESHOLD_DIR = DATA_DIR / "thresholds"
@@ -15,12 +16,29 @@ SEED_DIR = DATA_DIR / "seeds"
 
 
 @lru_cache(maxsize=128)
-def _load_json_file(path_str: str) -> dict[str, Any]:
-    """Cached JSON file loader to avoid redundant I/O and parsing."""
-    import json
+def _load_json_file_cached(path_str: str) -> dict[str, Any]:
+    """Cached JSON file loader to avoid redundant I/O and parsing.
 
+    Private: returns the *same* dict object on every call. Callers must go
+    through `_load_json_file`, which hands out a deep copy, so that no
+    caller can mutate the shared cached object out from under everyone
+    else. If the underlying file changes on disk (e.g. via
+    `govsynth refresh-census-data`), call `_load_json_file_cached.cache_clear()`
+    to invalidate stale entries.
+    """
     with open(path_str) as f:
-        return json.load(f)
+        data: dict[str, Any] = json.load(f)
+        return data
+
+
+def _load_json_file(path_str: str) -> dict[str, Any]:
+    """Load a JSON file with a process-lifetime cache keyed by path.
+
+    Returns a deep copy of the cached data on every call so callers can
+    freely read or mutate the result without corrupting the shared cache
+    or leaking state between callers.
+    """
+    return copy.deepcopy(_load_json_file_cached(path_str))
 
 
 @dataclass
@@ -72,8 +90,7 @@ class ProgramThresholds:
         max_key = max(self.households.keys())
         if size > max_key:
             raise ValueError(
-                f"Household size {size} exceeds maximum defined size {max_key} "
-                f"for {self.program} {self.fiscal_year}"
+                f"Household size {size} exceeds maximum defined size {max_key} for {self.program} {self.fiscal_year}"
             )
         raise KeyError(f"No threshold entry for household size {size}")
 
@@ -118,8 +135,7 @@ class DataSource(ABC):
         path = THRESHOLD_DIR / filename
         if not path.exists():
             raise FileNotFoundError(
-                f"Threshold file not found: {path}. "
-                "Run `govsynth update-thresholds` to download latest data."
+                f"Threshold file not found: {path}. Run `govsynth update-thresholds` to download latest data."
             )
         # Use cached loader to avoid redundant disk I/O and parsing
         return _load_json_file(str(path))

@@ -1,4 +1,5 @@
 """govsynth generate command — single-preset case generation."""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +12,7 @@ import typer
 from govsynth.cli.output import emit_status, make_console
 from govsynth.formatters.jsonl import JSONLFormatter
 from govsynth.formatters.yaml_fmt import YAMLFormatter
+from govsynth.models.test_case import TestCase
 from govsynth.pipeline import Pipeline
 
 
@@ -19,9 +21,7 @@ def generate(
     n: Annotated[int, typer.Option("--n", "-n", help="Number of cases")] = 100,
     seed: Annotated[int | None, typer.Option(help="RNG seed")] = None,
     output: Annotated[Path | None, typer.Option("--output", "-o", help="Output dir/file")] = None,
-    formats: Annotated[
-        list[str], typer.Option("--format", "-f", help="yaml|jsonl|csv (repeatable)")
-    ] = ["yaml"],
+    formats: Annotated[list[str] | None, typer.Option("--format", "-f", help="yaml|jsonl|csv (repeatable)")] = None,
     profile_strategy: Annotated[
         str | None,
         typer.Option(
@@ -34,6 +34,8 @@ def generate(
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Generate synthetic test cases for a single preset."""
+    if formats is None:
+        formats = ["yaml"]
     console = make_console(quiet=quiet)
 
     try:
@@ -46,8 +48,8 @@ def generate(
 
     if output is None:
         # Validate formats before streaming — only yaml and jsonl support stdout
-        _STDOUT_FORMATS = {"yaml", "jsonl"}
-        unsupported = [f for f in formats if f.lower().strip() not in _STDOUT_FORMATS]
+        stdout_formats = {"yaml", "jsonl"}
+        unsupported = [f for f in formats if f.lower().strip() not in stdout_formats]
         if unsupported:
             console.print(
                 f"[red]Error:[/red] Stdout streaming not supported for format(s): "
@@ -59,13 +61,19 @@ def generate(
         pipeline.save(cases, output, formats=formats)
 
     emit_status(
-        {"command": "generate", "preset": preset, "n": len(cases), "output": str(output), "status": "ok"},
+        {
+            "command": "generate",
+            "preset": preset,
+            "n": len(cases),
+            "output": str(output),
+            "status": "ok",
+        },
         as_json=as_json,
         console=console,
     )
 
 
-def _stream_to_stdout(cases: list, formats: list[str]) -> None:
+def _stream_to_stdout(cases: list[TestCase], formats: list[str]) -> None:
     """Write cases to stdout in the requested format(s).
 
     Args:

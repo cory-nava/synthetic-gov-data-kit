@@ -1,13 +1,20 @@
 """Integration tests for govsynth refresh-census-data.
 
-No tests make real Census API calls. Network tests are manual/opt-in only.
+No tests make real Census API calls. The fetch/write step is exercised by
+monkeypatching `build_state_census_json`/`write_state_file` at their source
+module -- `refresh_census_data` imports them locally on each call, so
+patching `govsynth.sources.us.census_fetcher` is picked up per-invocation.
 """
+
 from __future__ import annotations
 
-import pytest
-from typer.testing import CliRunner
+from pathlib import Path
+from typing import Any
 
+import httpx
+import pytest
 from govsynth.cli.main import app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -33,9 +40,7 @@ def test_dry_run_mentions_state() -> None:
 
 
 def test_dry_run_json_exits_zero() -> None:
-    result = runner.invoke(
-        app, ["refresh-census-data", "--state", "VA", "--dry-run", "--json"]
-    )
+    result = runner.invoke(app, ["refresh-census-data", "--state", "VA", "--dry-run", "--json"])
     assert result.exit_code == 0
 
 
@@ -65,3 +70,76 @@ def test_dry_run_all_states_no_prompt() -> None:
     """--dry-run skips the confirmation prompt even for all states."""
     result = runner.invoke(app, ["refresh-census-data", "--dry-run"])
     assert result.exit_code == 0
+
+
+def _fake_data(state: str) -> dict[str, Any]:
+    return {"_metadata": {"state": state}}
+
+
+class TestFetchAndWrite:
+    def test_successful_single_state_refresh_exits_zero(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setattr(
+            "govsynth.sources.us.census_fetcher.build_state_census_json",
+            lambda state, year, api_key: _fake_data(state),
+        )
+        monkeypatch.setattr(
+            "govsynth.sources.us.census_fetcher.write_state_file",
+            lambda state, data, data_dir: tmp_path / f"{state.lower()}.json",
+        )
+        result = runner.invoke(app, ["refresh-census-data", "--state", "VA"])
+        assert result.exit_code == 0
+        assert "VA" in result.output
+
+    def test_successful_refresh_emits_json_status(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setattr(
+            "govsynth.sources.us.census_fetcher.build_state_census_json",
+            lambda state, year, api_key: _fake_data(state),
+        )
+        monkeypatch.setattr(
+            "govsynth.sources.us.census_fetcher.write_state_file",
+            lambda state, data, data_dir: tmp_path / f"{state.lower()}.json",
+        )
+        result = runner.invoke(app, ["refresh-census-data", "--state", "VA", "--json"])
+        assert result.exit_code == 0
+        assert '"status": "ok"' in result.stderr
+
+    def test_persistent_http_error_exits_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _raise(state: str, year: int, api_key: str | None) -> dict[str, Any]:
+            request = httpx.Request("GET", "https://api.census.gov/data")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("server error", request=request, response=response)
+
+        monkeypatch.setattr("govsynth.sources.us.census_fetcher.build_state_census_json", _raise)
+        result = runner.invoke(app, ["refresh-census-data", "--state", "VA"])
+        assert result.exit_code == 1
+        assert "VA" in result.output
+
+    def test_rate_limit_retries_and_succeeds(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        calls = {"n": 0}
+
+        def _fetch(state: str, year: int, api_key: str | None) -> dict[str, Any]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                request = httpx.Request("GET", "https://api.census.gov/data")
+                response = httpx.Response(429, request=request)
+                raise httpx.HTTPStatusError("rate limited", request=request, response=response)
+            return _fake_data(state)
+
+        monkeypatch.setattr("govsynth.sources.us.census_fetcher.build_state_census_json", _fetch)
+        monkeypatch.setattr(
+            "govsynth.sources.us.census_fetcher.write_state_file",
+            lambda state, data, data_dir: tmp_path / f"{state.lower()}.json",
+        )
+        monkeypatch.setattr("govsynth.cli.commands.refresh_census.time.sleep", lambda s: None)
+        result = runner.invoke(app, ["refresh-census-data", "--state", "VA"])
+        assert result.exit_code == 0
+        assert calls["n"] == 2
+
+    def test_generic_exception_is_caught_and_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _raise(state: str, year: int, api_key: str | None) -> dict[str, Any]:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr("govsynth.sources.us.census_fetcher.build_state_census_json", _raise)
+        result = runner.invoke(app, ["refresh-census-data", "--state", "VA"])
+        assert result.exit_code == 1
+        assert "boom" in result.output
