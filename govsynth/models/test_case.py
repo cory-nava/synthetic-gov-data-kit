@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from govsynth.models.enums import Difficulty, Program, TaskType
+from govsynth.models.enums import Difficulty, TaskType
 from govsynth.models.rationale import RationaleTrace
 
 
@@ -121,9 +121,17 @@ class TestCase(BaseModel):
     def validate_program(cls, v: str) -> str:
         from govsynth.models.enums import KNOWN_PROGRAMS
 
-        if v not in KNOWN_PROGRAMS:
-            raise ValueError(f"Unknown program '{v}'. Known: {KNOWN_PROGRAMS}")
-        return v
+        if v in KNOWN_PROGRAMS:
+            return v
+        # Escape hatch for programs sourced from an imported ruleset (e.g. the
+        # Catala adapter) that aren't one of the built-in KNOWN_PROGRAMS.
+        # Still must be a lowercase_snake_case slug, not an arbitrary string.
+        if re.fullmatch(r"[a-z0-9_]+", v):
+            return v
+        raise ValueError(
+            f"Invalid program '{v}'. Must be one of {KNOWN_PROGRAMS} or a "
+            "lowercase_snake_case identifier for a custom-imported program."
+        )
 
     @model_validator(mode="after")
     def validate_rationale_has_steps(self) -> TestCase:
