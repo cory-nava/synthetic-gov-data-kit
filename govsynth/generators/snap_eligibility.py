@@ -27,8 +27,12 @@ _SNAP_THRESHOLD_TYPES = [
     "asset_limit_elderly_disabled",
 ]
 
-# Offset values: at limit, just above, just below
-_OFFSETS = [0.0, 0.01, -0.01, 0.05, -0.05]
+# Offsets from a threshold, as a fraction. Values within +/-0.05 sit on the
+# boundary and drive HARD/MEDIUM classification; the +/-0.35 pair produces
+# households clearly clear of any limit, which is what EASY means here.
+# _classify_difficulty requires abs(offset) > 0.30 for EASY, so without these
+# that branch is unreachable.
+_OFFSETS = [0.0, 0.01, -0.01, 0.05, -0.05, 0.35, -0.35]
 
 _TASK_INSTRUCTION = (
     "Based on the household's situation described above, determine whether this household "
