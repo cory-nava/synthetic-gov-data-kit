@@ -261,7 +261,7 @@ class SNAPEligibilityGenerator:
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person homeless household in {self.state} with "
@@ -381,7 +381,7 @@ class SNAPEligibilityGenerator:
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A college student enrolled half-time in {self.state} with "
@@ -526,7 +526,7 @@ class SNAPEligibilityGenerator:
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person household in {self.state} earns "
@@ -671,7 +671,7 @@ class SNAPEligibilityGenerator:
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person household in {self.state} with a migrant agricultural "
@@ -836,7 +836,7 @@ class SNAPEligibilityGenerator:
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {total_members}-person household in {self.state} with mixed immigration "
@@ -963,7 +963,7 @@ class SNAPEligibilityGenerator:
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person household in {self.state} with ${gross:,.0f}/month gross "
@@ -1210,7 +1210,7 @@ class SNAPEligibilityGenerator:
             program=Program.SNAP.value,
             jurisdiction=f"us.{state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person household in {state} with ${gross:,.0f}/month gross "
