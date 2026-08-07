@@ -1606,12 +1606,15 @@ class SNAPEligibilityGenerator(Generator):
 
         if abs(offset) <= 0.01 and threshold_type:
             return Difficulty.HARD
-        elif profile.has_elderly_or_disabled or self.bbce_source.is_bbce:
-            return Difficulty.MEDIUM
-        elif abs(offset) > 0.30:
+        if abs(offset) > 0.30:
+            # Clearly clear of every limit. This must be checked BEFORE the BBCE /
+            # elderly gate below: is_bbce is a property of the state, not the
+            # household, and 44 of 51 jurisdictions are BBCE -- gating on it first
+            # made EASY structurally unreachable almost everywhere.
             return Difficulty.EASY
-        else:
+        if profile.has_elderly_or_disabled or self.bbce_source.is_bbce:
             return Difficulty.MEDIUM
+        return Difficulty.MEDIUM
 
     def _make_case_id(self, profile: USHouseholdProfile, is_eligible: bool, index: int, seed: int | None) -> str:
         threshold = profile.extra.get("threshold_type", "general")
