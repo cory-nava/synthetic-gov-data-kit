@@ -1727,30 +1727,52 @@ class SNAPEligibilityGenerator:
 
     def _classify_difficulty(self, profile: USHouseholdProfile, is_eligible: bool) -> Difficulty:
         threshold_type = profile.extra.get("threshold_type", "")
-        offset = profile.extra.get("offset_pct", 0.5)
+        offset = profile.extra.get("offset_pct")
+        if offset is None:
+            # Sampled independently of any threshold: we do not know how far this
+            # household sits from a limit, so we must not claim it is clear of one.
+            return Difficulty.MEDIUM
 
         if abs(offset) <= 0.01 and threshold_type:
             return Difficulty.HARD
-        if abs(offset) > 0.30:
-            # Clearly clear of every limit. This must be checked BEFORE the BBCE /
-            # elderly gate below: is_bbce is a property of the state, not the
-            # household, and 44 of 51 jurisdictions are BBCE -- gating on it first
-            # made EASY structurally unreachable almost everywhere.
-            return Difficulty.EASY
-        if profile.has_elderly_or_disabled or self.bbce_source.is_bbce:
+        # Elderly/disabled changes four computations (gross test waived, medical
+        # deduction, uncapped excess shelter, different asset cap) no matter how far
+        # the household sits from a limit. It is a per-household property, unlike
+        # is_bbce, which is constant per generator and is already a variation tag.
+        if profile.has_elderly_or_disabled:
             return Difficulty.MEDIUM
+        if abs(offset) > 0.30:
+            return Difficulty.EASY
         return Difficulty.MEDIUM
 
     def _make_case_id(self, profile: USHouseholdProfile, is_eligible: bool, index: int) -> str:
         threshold = profile.extra.get("threshold_type", "general")
         offset = profile.extra.get("offset_pct", 0.0)
-        offset_tag = "at_limit" if offset == 0.0 else "above_limit" if offset > 0 else "below_limit"
+        offset_tag = self._offset_tag(offset)
         outcome = "eligible" if is_eligible else "ineligible"
         hh = f"hh{profile.household_size}"
         uid = str(uuid.uuid4())[:6]
         return (
             f"snap.{self.state.lower()}.eligibility.{threshold}.{offset_tag}.{outcome}.{hh}.{uid}"
         )
+
+    @staticmethod
+    def _offset_tag(offset: float) -> str:
+        """Bucket an offset_pct for case IDs / variation tags.
+
+        Buckets by both sign and magnitude: a 1% offset and a 35% offset both
+        have offset > 0, but only the former is actually "at the boundary."
+        Collapsing them to the same "above_limit"/"below_limit" tag would let
+        a consumer filtering for boundary cases silently pull in far-from-limit
+        ones too (see the widened _OFFSETS set, which now includes +/-0.35).
+        """
+        if offset == 0.0:
+            return "at_limit"
+        if offset > 0.30:
+            return "well_above_limit"
+        if offset < -0.30:
+            return "well_below_limit"
+        return "above_limit" if offset > 0 else "below_limit"
 
     def _build_variation_tags(self, profile: USHouseholdProfile) -> list[str]:
         tags: list[str] = []
@@ -1760,12 +1782,7 @@ class SNAPEligibilityGenerator:
         if threshold:
             tags.append(threshold)
         if offset is not None:
-            if offset == 0.0:
-                tags.append("at_limit")
-            elif offset > 0:
-                tags.append("above_limit")
-            else:
-                tags.append("below_limit")
+            tags.append(self._offset_tag(offset))
         if profile.has_elderly_or_disabled:
             tags.append("elderly_or_disabled")
             tags.append("gross_income_test_waived")

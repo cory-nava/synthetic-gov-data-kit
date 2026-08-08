@@ -144,6 +144,8 @@ class USHouseholdProfile:
                 0.0  = exactly at limit
                 0.01 = 1% above limit  (should be ineligible for income tests)
                -0.01 = 1% below limit  (should be eligible)
+                0.35 = 35% above limit (clearly ineligible, not a boundary case)
+               -0.35 = 35% below limit (clearly eligible, not a boundary case)
             seed: RNG seed.
 
         Returns:
