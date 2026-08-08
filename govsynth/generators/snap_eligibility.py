@@ -151,22 +151,24 @@ class SNAPEligibilityGenerator(Generator):
         one case per type.
         """
         builders = [
-            self._build_homeless_case,
-            self._build_student_case,
-            self._build_boarder_case,
-            self._build_migrant_case,
-            self._build_mixed_immigration_case,
-            self._build_categorical_eligibility_case,
-            self._build_bbce_expanded_income_case,
+            ("_build_homeless_case", self._build_homeless_case),
+            ("_build_student_case", self._build_student_case),
+            ("_build_boarder_case", self._build_boarder_case),
+            ("_build_migrant_case", self._build_migrant_case),
+            ("_build_mixed_immigration_case", self._build_mixed_immigration_case),
+            ("_build_categorical_eligibility_case", self._build_categorical_eligibility_case),
+            ("_build_bbce_expanded_income_case", self._build_bbce_expanded_income_case),
         ]
         cases: list[TestCase] = []
         for i in range(n):
-            builder = builders[i % len(builders)]
+            name, builder = builders[i % len(builders)]
             try:
                 case = builder(rng)
                 cases.append(case)
             except Exception as exc:
-                print(f"  Warning: skipped special case {i} due to error: {exc}")
+                raise RuntimeError(
+                    f"special-case builder {name!r} failed while building case {i}: {exc}"
+                ) from exc
         return cases
 
     def _build_homeless_case(self, rng: random.Random) -> TestCase:

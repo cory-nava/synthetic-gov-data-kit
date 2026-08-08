@@ -9,6 +9,9 @@ Cases in Group B are planned for a future release once the required modeling inf
 
 ## Group A — Implemented in this release
 
+All Group A cases are emitted with `difficulty: adversarial` — they exist specifically because
+models misapply them.
+
 ### 1. Homeless shelter deduction
 
 **CFR citation:** 7 CFR 273.9(c)(6)
