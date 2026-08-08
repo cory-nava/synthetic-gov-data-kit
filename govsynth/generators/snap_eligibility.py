@@ -7,6 +7,7 @@ including full rationale traces grounded in 7 CFR Part 273.
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 
 from govsynth.fiscal_year import DEFAULT_SNAP_FY, FiscalYearConfig
 from govsynth.generators.base import Generator
@@ -118,7 +119,10 @@ class SNAPEligibilityGenerator(Generator):
                     case = self._build_case(profile, case_seed, i)
                     cases.append(case)
                 except Exception as exc:
-                    print(f"  Warning: skipped case {i} due to error: {exc}")
+                    raise RuntimeError(
+                        f"random-profile case builder failed while building case {i} "
+                        f"of {n}: {exc}"
+                    ) from exc
             return cases
 
         # edge_saturated: two-phase split
@@ -136,7 +140,10 @@ class SNAPEligibilityGenerator(Generator):
                 case = self._build_case(profile, case_seed, i)
                 edge_cases.append(case)
             except Exception as exc:
-                print(f"  Warning: skipped edge case {i} due to error: {exc}")
+                raise RuntimeError(
+                    f"edge-saturated case builder failed while building edge case {i} "
+                    f"of {n_edge}: {exc}"
+                ) from exc
 
         return special_cases + edge_cases
 
@@ -144,13 +151,15 @@ class SNAPEligibilityGenerator(Generator):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _build_special_population_cases(self, n: int, rng: random.Random) -> list[TestCase]:
-        """Build n special-population edge cases, cycling through 7 types.
+    def _special_population_builders(
+        self,
+    ) -> list[tuple[str, Callable[[random.Random], TestCase]]]:
+        """Name/callable pairs for the 7 special-population builders.
 
-        When n < 7, cycles through first n types. When n >= 7, guarantees at least
-        one case per type.
+        Extracted so tests can inspect the pairing (name matches the callable's
+        __name__) without invoking any builder.
         """
-        builders = [
+        return [
             ("_build_homeless_case", self._build_homeless_case),
             ("_build_student_case", self._build_student_case),
             ("_build_boarder_case", self._build_boarder_case),
@@ -159,6 +168,14 @@ class SNAPEligibilityGenerator(Generator):
             ("_build_categorical_eligibility_case", self._build_categorical_eligibility_case),
             ("_build_bbce_expanded_income_case", self._build_bbce_expanded_income_case),
         ]
+
+    def _build_special_population_cases(self, n: int, rng: random.Random) -> list[TestCase]:
+        """Build n special-population edge cases, cycling through 7 types.
+
+        When n < 7, cycles through first n types. When n >= 7, guarantees at least
+        one case per type.
+        """
+        builders = self._special_population_builders()
         cases: list[TestCase] = []
         for i in range(n):
             name, builder = builders[i % len(builders)]
