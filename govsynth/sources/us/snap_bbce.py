@@ -79,8 +79,7 @@ def _load_bbce_table(fiscal_year: int) -> dict[str, Any]:
     path = THRESHOLD_DIR / _bbce_filename(fiscal_year)
     if not path.exists():
         raise FileNotFoundError(
-            f"BBCE data file not found: {path}. Expected {_bbce_filename(fiscal_year)} "
-            "in data/thresholds/."
+            f"BBCE data file not found: {path}. Expected {_bbce_filename(fiscal_year)} in data/thresholds/."
         )
     return _load_json_file(str(path))
 
@@ -273,11 +272,7 @@ class SNAPBBCESource(SNAPSource):
         if not has_elderly_or_disabled:
             gross_limit = self.effective_gross_limit(household_size)
             if gross_income > gross_limit:
-                basis = (
-                    f"{p.gross_income_limit_pct_fpl}% FPL BBCE limit, {self.state}"
-                    if p.bbce
-                    else "130% FPL"
-                )
+                basis = f"{p.gross_income_limit_pct_fpl}% FPL BBCE limit, {self.state}" if p.bbce else "130% FPL"
                 return False, (
                     f"Ineligible: gross income ${gross_income:,.2f} exceeds "
                     f"${gross_limit:,.2f} ({basis}, {household_size}-person HH)"
@@ -296,16 +291,11 @@ class SNAPBBCESource(SNAPSource):
         cap = self._asset_cap(has_elderly_or_disabled)
         if cap is not None and liquid_assets > cap:
             kind = "BBCE asset cap" if p.bbce else "asset limit"
-            return False, (
-                f"Ineligible: assets ${liquid_assets:,.2f} exceed the ${cap:,.2f} "
-                f"{kind} ({self.state})"
-            )
+            return False, (f"Ineligible: assets ${liquid_assets:,.2f} exceed the ${cap:,.2f} {kind} ({self.state})")
 
         if p.bbce:
             asset_note = (
-                "asset test waived"
-                if p.asset_limit is None
-                else f"assets within ${p.asset_limit:,.0f} BBCE cap"
+                "asset test waived" if p.asset_limit is None else f"assets within ${p.asset_limit:,.0f} BBCE cap"
             )
             return True, (
                 f"Eligible under {self.state} BBCE ({p.gross_income_limit_pct_fpl}% FPL gross "

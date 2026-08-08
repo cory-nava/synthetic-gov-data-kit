@@ -84,7 +84,7 @@ def test_mixed_immigration_status_hh_size_reduction() -> None:
     assert "prorate" not in full_rationale or "income" not in full_rationale
 
 
-def test_bbce_expanded_gross_limit_invariants():
+def test_bbce_expanded_gross_limit_invariants() -> None:
     """BBCE expanded-income case: gross always above federal 130%; cites 273.2(j)(2)."""
     gen = SNAPEligibilityGenerator(state="VA")  # VA is BBCE at 200% FPL
     rng = random.Random(42)
@@ -104,7 +104,7 @@ def test_bbce_expanded_gross_limit_invariants():
     assert "net income test" in full
 
 
-def test_bbce_expanded_gross_limit_both_outcomes_reachable():
+def test_bbce_expanded_gross_limit_both_outcomes_reachable() -> None:
     """Across seeds, the case produces both eligible (in-band) and ineligible (above-limit)."""
     gen = SNAPEligibilityGenerator(state="CA")  # CA is BBCE at 200% FPL, assets waived
     outcomes = set()
@@ -121,7 +121,7 @@ def test_bbce_expanded_gross_limit_both_outcomes_reachable():
     assert outcomes == {"eligible", "ineligible"}
 
 
-def test_bbce_expanded_case_in_special_population_rotation():
+def test_bbce_expanded_case_in_special_population_rotation() -> None:
     """The 7th special-population type is generated when n >= 7."""
     gen = SNAPEligibilityGenerator(state="VA")
     cases = gen.generate(n=14, seed=42)

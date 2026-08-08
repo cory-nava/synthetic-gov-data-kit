@@ -41,9 +41,7 @@ class TestSNAPVerifiedThresholds:
         for size, expected_benefit in expected.items():
             assert va_source.thresholds().by_household_size(size).max_benefit == expected_benefit
 
-    def test_asset_limit_federal_baseline_all_states(
-        self, va_source: SNAPSource, tx_source: SNAPSource
-    ) -> None:
+    def test_asset_limit_federal_baseline_all_states(self, va_source: SNAPSource, tx_source: SNAPSource) -> None:
         """SNAPSource applies the federal $3,000 general asset limit regardless of state.
 
         BBCE waivers/caps are layered on by SNAPBBCESource, not SNAPSource.
@@ -51,7 +49,7 @@ class TestSNAPVerifiedThresholds:
         assert va_source.thresholds().asset_limit_general == 3000
         assert tx_source.thresholds().asset_limit_general == 3000
 
-    def test_no_bbce_flags_in_federal_source(self, va_source):
+    def test_no_bbce_flags_in_federal_source(self, va_source: SNAPSource) -> None:
         """SNAPSource no longer carries BBCE classification in extra."""
         extra = va_source.thresholds().extra
         assert "bbce_state" not in extra
@@ -90,9 +88,7 @@ class TestNetIncomeCalculation:
     def test_basic_all_earned(self, va_source: SNAPSource) -> None:
         # $2,000 gross, all earned, HH3
         # 20% ded = $400 → $1,600; std ded $209 → $1,391
-        net = va_source.calculate_net_income(
-            gross_income=2000, household_size=3, earned_income=2000
-        )
+        net = va_source.calculate_net_income(gross_income=2000, household_size=3, earned_income=2000)
         assert net == pytest.approx(1391.0, rel=0.01)
 
     def test_net_income_zero_floor(self, va_source: SNAPSource) -> None:
@@ -101,12 +97,8 @@ class TestNetIncomeCalculation:
 
     def test_shelter_cap_at_744(self, va_source: SNAPSource) -> None:
         # Generate two cases where excess shelter differs but both exceed cap
-        net_a = va_source.calculate_net_income(
-            gross_income=2000, household_size=3, shelter_costs=3000
-        )
-        net_b = va_source.calculate_net_income(
-            gross_income=2000, household_size=3, shelter_costs=2500
-        )
+        net_a = va_source.calculate_net_income(gross_income=2000, household_size=3, shelter_costs=3000)
+        net_b = va_source.calculate_net_income(gross_income=2000, household_size=3, shelter_costs=2500)
         # Both shelter amounts exceed cap, so net should be the same
         assert net_a == net_b
 

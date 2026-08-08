@@ -105,9 +105,7 @@ class SNAPSource(DataSource):
         std_deductions = {size: get_standard_deduction(size, self._region) for size in range(1, 9)}
 
         shelter_key = f"excess_shelter_deduction_cap_{self._region}"
-        shelter_cap = float(
-            raw.get(shelter_key, raw.get("excess_shelter_deduction_cap_48_states_dc", 744))
-        )
+        shelter_cap = float(raw.get(shelter_key, raw.get("excess_shelter_deduction_cap_48_states_dc", 744)))
 
         return ProgramThresholds(
             program="snap",
@@ -194,9 +192,7 @@ class SNAPSource(DataSource):
                 shelter_cap = float(t.extra["excess_shelter_cap"]) if t.extra else 744.0
                 half_income = max(0.0, after_medical) * 0.5
                 raw_excess = max(0.0, shelter_costs - half_income)
-                shelter_ded = (
-                    raw_excess if has_elderly_or_disabled else min(raw_excess, shelter_cap)
-                )
+                shelter_ded = raw_excess if has_elderly_or_disabled else min(raw_excess, shelter_cap)
 
         return max(0.0, after_medical - shelter_ded)
 
