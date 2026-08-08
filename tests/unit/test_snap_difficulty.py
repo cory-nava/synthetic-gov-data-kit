@@ -119,3 +119,17 @@ def test_constructor_docstring_documents_exactly_its_parameters():
         f"documented but absent: {documented - actual}; "
         f"present but undocumented: {actual - documented}"
     )
+
+
+def test_a_failing_edge_case_builder_is_not_silently_swallowed(monkeypatch):
+    import random
+
+    generator = SNAPEligibilityGenerator(state="VA")
+
+    def boom(_rng):
+        raise ValueError("builder exploded")
+
+    monkeypatch.setattr(generator, "_build_homeless_case", boom)
+
+    with pytest.raises(RuntimeError, match="homeless"):
+        generator._build_special_population_cases(7, random.Random(0))
