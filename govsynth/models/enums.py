@@ -24,10 +24,15 @@ class Difficulty(str, Enum):
     #: from a threshold, well beyond it); the eligibility call has no
     #: ambiguity a model could plausibly get wrong.
     EASY = "easy"
-    #: Either the household's distance from a threshold is unknown (profile
-    #: not sampled relative to any boundary), or a real complicating factor
-    #: (elderly/disabled status, BBCE state rules) makes the determination
-    #: nontrivial even when not at a hard boundary.
+    #: Covers three populations, none of them a hard boundary call: (1) the
+    #: household's distance from a threshold is unknown (profile not sampled
+    #: relative to any boundary); (2) the household has elderly/disabled
+    #: status, which changes several computations (gross test waived, medical
+    #: deduction, uncapped shelter deduction, different asset cap) regardless
+    #: of how far it sits from any limit; or (3) the household is near but not
+    #: on a boundary -- further than the 1% HARD cutoff but not clearly clear
+    #: of the limit either (e.g. +/-5%). In practice (2) and (3) are the
+    #: largest contributors; BBCE state rules alone do not drive this label.
     MEDIUM = "medium"
     #: Household sits within 1% of a named policy threshold: the correct
     #: answer depends on getting the boundary condition exactly right.

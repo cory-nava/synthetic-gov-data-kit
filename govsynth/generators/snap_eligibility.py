@@ -68,6 +68,14 @@ class SNAPEligibilityGenerator(Generator):
     comfortably clear of every limit (more than 30% away) is EASY; every other case
     is MEDIUM. The resulting mix of difficulty levels in the output is emergent, not
     requested.
+
+    This description covers _classify_difficulty only. Under 'edge_saturated',
+    the special-population builders (homeless, student, boarder, migrant, mixed
+    immigration status, categorical eligibility, expanded BBCE income --
+    EDGE_CASES.md Group A) bypass _classify_difficulty entirely and stamp
+    ADVERSARIAL directly, since those cases exist because models tend to
+    misapply that specific rule, not because of any threshold distance. For a
+    typical 'edge_saturated' run, roughly 20% of output is ADVERSARIAL.
     """
 
     def __init__(
@@ -1623,14 +1631,17 @@ class SNAPEligibilityGenerator(Generator):
             )
 
     def _classify_difficulty(self, profile: USHouseholdProfile, is_eligible: bool) -> Difficulty:
-        threshold_type = profile.extra.get("threshold_type", "")
         offset = profile.extra.get("offset_pct")
         if offset is None:
             # Sampled independently of any threshold: we do not know how far this
             # household sits from a limit, so we must not claim it is clear of one.
             return Difficulty.MEDIUM
 
-        if abs(offset) <= 0.01 and threshold_type:
+        # No `and threshold_type` conjunct here: the two callers that populate
+        # offset_pct (_build_snap_threshold_profile, _build_wic_threshold_profile
+        # in us_household.py) always set threshold_type in the same extra dict,
+        # so by the time offset is not None, threshold_type is never falsy.
+        if abs(offset) <= 0.01:
             return Difficulty.HARD
         # Elderly/disabled changes four computations (gross test waived, medical
         # deduction, uncapped excess shelter, different asset cap) no matter how far
@@ -1644,8 +1655,7 @@ class SNAPEligibilityGenerator(Generator):
 
     def _make_case_id(self, profile: USHouseholdProfile, is_eligible: bool, index: int, seed: int | None) -> str:
         threshold = profile.extra.get("threshold_type", "general")
-        offset = profile.extra.get("offset_pct", 0.0)
-        offset_tag = self._offset_tag(offset)
+        offset = profile.extra.get("offset_pct")
         outcome = "eligible" if is_eligible else "ineligible"
         hh = f"hh{profile.household_size}"
         # Combine seed and index so cases within the same batch don't collide
@@ -1653,7 +1663,15 @@ class SNAPEligibilityGenerator(Generator):
         # non-deterministic behavior (a fresh os-random seed per call).
         uid_seed = f"{seed}-{index}" if seed is not None else None
         uid = build_short_uid(random.Random(uid_seed))
-        return f"snap.{self.state.lower()}.eligibility.{threshold}.{offset_tag}.{outcome}.{hh}.{uid}"
+        # Mirror _build_variation_tags: when offset_pct is unset (e.g. 'uniform'
+        # / 'realistic' strategies with extra == {}), we have no known distance
+        # from any threshold, so omit the offset segment entirely rather than
+        # defaulting to 0.0 and fabricating an "at_limit" claim.
+        segments = ["snap", self.state.lower(), "eligibility", threshold]
+        if offset is not None:
+            segments.append(self._offset_tag(offset))
+        segments.extend([outcome, hh, uid])
+        return ".".join(segments)
 
     @staticmethod
     def _offset_tag(offset: float) -> str:
