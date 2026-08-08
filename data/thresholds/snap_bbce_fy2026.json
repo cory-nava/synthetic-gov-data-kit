@@ -11,7 +11,7 @@
     "cfr_reference": "7 CFR 273.2(j)(2)(ii)",
     "statutory_ceiling_pct_fpl": 200,
     "verification_status": "verified",
-    "verification_note": "Per-state gross income limits and asset rules taken from the USDA FNS BBCE States Chart (last updated August 2025) and cross-checked against the CBPP BBCE page. 45 BBCE jurisdictions (43 states + DC + GU + VI). The 7 non-BBCE states are KS, MS, MO, SD, TN, UT, WY. Gross income limit dollar values are NOT stored here; SNAPBBCESource derives them from us_fpl_{fpl_year}.json using SNAP's published rounding ceil(annual_fpl * pct / 100 / 12).",
+    "verification_note": "Per-state gross income limits and asset rules taken from the USDA FNS BBCE States Chart (last updated August 2025) and cross-checked against the CBPP BBCE page. 46 BBCE jurisdictions (43 states + DC + GU + VI). The 7 non-BBCE states are KS, MS, MO, SD, TN, UT, WY. Gross income limit dollar values are NOT stored here; SNAPBBCESource derives them from us_fpl_{fpl_year}.json using SNAP's published rounding ceil(annual_fpl * pct / 100 / 12).",
     "modeling_notes": [
       "net_income_test_applies is true for every jurisdiction. CBPP notes BBCE technically permits states to raise or eliminate the net income limit, but in practice the 100% FPL net test is near-universally applied. Treated here as a modeling assumption.",
       "asset_limit: null = asset/resource test fully waived; a number = state-imposed liquid-asset cap; non-BBCE states carry 3000 (the federal general limit, distinct from the 4500 elderly/disabled limit which is not encoded per-row).",
