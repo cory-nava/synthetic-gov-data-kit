@@ -13,6 +13,7 @@ A clear description of what is wrong.
 ```python
 # Minimal code to reproduce the issue
 from govsynth import Pipeline
+
 pipeline = Pipeline.from_preset("snap.va")
 # ...
 ```

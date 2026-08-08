@@ -117,17 +117,22 @@ pipeline = Pipeline.from_preset("snap.va")
 cases = pipeline.generate(n=100, seed=42)
 
 # Inspect special-population cases
-special = [c for c in cases if any(
-    tag in c.variation_tags for tag in [
-        "homeless_shelter_deduction",
-        "student_exclusion",
-        "boarder_income_proration",
-        "migrant_income_averaging",
-        "mixed_immigration_status_hh_size_reduction",
-        "categorical_eligibility_tanf_ssi",
-        "bbce_expanded_gross_limit",
-    ]
-)]
+special = [
+    c
+    for c in cases
+    if any(
+        tag in c.variation_tags
+        for tag in [
+            "homeless_shelter_deduction",
+            "student_exclusion",
+            "boarder_income_proration",
+            "migrant_income_averaging",
+            "mixed_immigration_status_hh_size_reduction",
+            "categorical_eligibility_tanf_ssi",
+            "bbce_expanded_gross_limit",
+        ]
+    )
+]
 print(f"{len(special)} special-population cases in this batch")
 ```
 
