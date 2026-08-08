@@ -133,3 +133,14 @@ def test_a_failing_edge_case_builder_is_not_silently_swallowed(monkeypatch):
 
     with pytest.raises(RuntimeError, match="homeless"):
         generator._build_special_population_cases(7, random.Random(0))
+
+
+def test_builder_names_match_their_callables():
+    """The builders list carries names as strings parallel to the methods.
+
+    A rename would leave the string stale and nothing else would notice.
+    """
+    generator = SNAPEligibilityGenerator(state="VA")
+    # Reach the list without invoking any builder.
+    for name, builder in generator._special_population_builders():
+        assert name == builder.__name__
