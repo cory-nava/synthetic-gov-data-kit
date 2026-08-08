@@ -113,10 +113,10 @@ govsynth verify-thresholds --program snap
 Presets bundle a data source, generator config, and profile strategy into one name:
 
 ```python
-Pipeline.from_preset("snap.va")     # Virginia SNAP FY2026 — strict asset test
-Pipeline.from_preset("snap.ca")     # California SNAP FY2026 — BBCE (no asset test)
-Pipeline.from_preset("snap.tx")     # Texas SNAP FY2026 — strict asset test
-Pipeline.from_preset("snap.md")     # Maryland SNAP FY2026 — BBCE
+Pipeline.from_preset("snap.va")  # Virginia SNAP FY2026 — strict asset test
+Pipeline.from_preset("snap.ca")  # California SNAP FY2026 — BBCE (no asset test)
+Pipeline.from_preset("snap.tx")  # Texas SNAP FY2026 — strict asset test
+Pipeline.from_preset("snap.md")  # Maryland SNAP FY2026 — BBCE
 Pipeline.from_preset("wic.national")  # WIC FY2026 national (185% FPL)
 ```
 
@@ -169,9 +169,9 @@ batch.save(cases, "./suite-v1/", formats=["yaml", "jsonl"])
 ### Output Formats
 
 ```python
-pipeline.save(cases, "./output/", formats=["yaml"])    # One .yaml file per case
-pipeline.save(cases, "./output/", formats=["jsonl"])   # Fine-tuning (messages format)
-pipeline.save(cases, "./output/", formats=["csv"])     # Review/inspection
+pipeline.save(cases, "./output/", formats=["yaml"])  # One .yaml file per case
+pipeline.save(cases, "./output/", formats=["jsonl"])  # Fine-tuning (messages format)
+pipeline.save(cases, "./output/", formats=["csv"])  # Review/inspection
 pipeline.save(cases, "./output/", formats=["yaml", "jsonl", "csv"])  # All three
 ```
 

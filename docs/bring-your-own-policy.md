@@ -178,8 +178,7 @@ class LIHEAPSource(DataSource):
             )
 
         return True, (
-            f"Eligible: ${gross_income:,.2f} ≤ ${limits.gross_monthly:,.2f} "
-            f"({t.extra['income_limit_pct_smi']}% SMI)"
+            f"Eligible: ${gross_income:,.2f} ≤ ${limits.gross_monthly:,.2f} ({t.extra['income_limit_pct_smi']}% SMI)"
         )
 ```
 
@@ -256,9 +255,7 @@ class LIHEAPEligibilityGenerator:
             extra={"offset_pct": offset, "threshold_type": "income_limit"},
         )
 
-    def _build_case(
-        self, profile: USHouseholdProfile, seed: int | None, index: int
-    ) -> TestCase:
+    def _build_case(self, profile: USHouseholdProfile, seed: int | None, index: int) -> TestCase:
         t = self.source.thresholds()
         limits = t.by_household_size(min(profile.household_size, 8))
         is_eligible, reason = self.source.is_eligible(
