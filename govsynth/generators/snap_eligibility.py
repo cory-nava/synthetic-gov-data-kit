@@ -54,12 +54,18 @@ class SNAPEligibilityGenerator:
     Args:
         fiscal_year: Federal fiscal year for thresholds. Default: FY2026.
         state: State code. Controls BBCE asset test rules.
-        include_reasoning_trace: Always True for compatibility.
 
     Difficulty is not a caller-supplied target: it is derived from each generated
-    household profile -- its distance from the nearest policy threshold and whether
-    it belongs to a special population (elderly/disabled) with different rules --
-    so the mix of difficulty levels in the output is emergent, not requested.
+    household profile, in a fixed order of precedence. A profile sampled without a
+    threshold offset has no known distance from a limit and falls back to MEDIUM.
+    Otherwise, sitting on the boundary (within 1% of a threshold) is checked first
+    and yields HARD -- even for an elderly/disabled household, since that check
+    runs before the special-population check. Only once the on-threshold check has
+    passed does elderly/disabled status force MEDIUM, regardless of how far from a
+    limit the household actually sits. A household with neither property that is
+    comfortably clear of every limit (more than 30% away) is EASY; every other case
+    is MEDIUM. The resulting mix of difficulty levels in the output is emergent, not
+    requested.
     """
 
     def __init__(
