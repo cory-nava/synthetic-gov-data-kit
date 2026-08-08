@@ -55,14 +55,17 @@ class SNAPEligibilityGenerator:
         fiscal_year: Federal fiscal year for thresholds. Default: FY2026.
         state: State code. Controls BBCE asset test rules.
         include_reasoning_trace: Always True for compatibility.
-        difficulty_distribution: Fraction of cases at each difficulty level.
+
+    Difficulty is not a caller-supplied target: it is derived from each generated
+    household profile -- its distance from the nearest policy threshold and whether
+    it belongs to a special population (elderly/disabled) with different rules --
+    so the mix of difficulty levels in the output is emergent, not requested.
     """
 
     def __init__(
         self,
         fiscal_year: int = DEFAULT_SNAP_FY,
         state: str = "VA",
-        difficulty_distribution: dict[str, float] | None = None,
     ) -> None:
         self.fiscal_year = fiscal_year
         self.state = state.upper()
@@ -71,12 +74,6 @@ class SNAPEligibilityGenerator:
         # BBCE-aware source so per-state gross/asset rules apply.
         self.source = SNAPSource(fiscal_year=fiscal_year, state=state)
         self.bbce_source = SNAPBBCESource(fiscal_year=fiscal_year, state=state)
-        self.difficulty_distribution = difficulty_distribution or {
-            "easy": 0.15,
-            "medium": 0.30,
-            "hard": 0.40,
-            "adversarial": 0.15,
-        }
 
     def generate(
         self,

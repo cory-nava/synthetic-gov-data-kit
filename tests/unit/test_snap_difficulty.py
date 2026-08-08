@@ -77,3 +77,21 @@ def test_elderly_disabled_households_are_never_easy_however_far_from_a_limit() -
     elderly = [c for c in cases if c.scenario.has_elderly_or_disabled]
     assert elderly, "fixture assumption broken: no elderly/disabled cases generated"
     assert all(c.difficulty != Difficulty.EASY for c in elderly)
+
+
+def test_generator_does_not_accept_a_distribution_it_cannot_honour():
+    """difficulty_distribution was accepted, documented, and never read.
+
+    Difficulty is derived from the profile, not requested. Accepting the
+    argument implied a guarantee the generator never provided.
+    """
+    with pytest.raises(TypeError):
+        SNAPEligibilityGenerator(state="VA", difficulty_distribution={"easy": 1.0})
+
+
+def test_difficulty_is_documented_as_derived():
+    doc = SNAPEligibilityGenerator.__init__.__doc__ or SNAPEligibilityGenerator.__doc__ or ""
+    assert "derived" in doc.lower() or "emergent" in doc.lower(), (
+        "the constructor docs should say difficulty is derived from the profile, "
+        "not requested by the caller"
+    )
