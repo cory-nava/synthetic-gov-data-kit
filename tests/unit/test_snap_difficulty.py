@@ -3,8 +3,7 @@
 import collections
 
 import pytest
-
-from govsynth.generators.snap_eligibility import SNAPEligibilityGenerator
+from govsynth.generators.snap_eligibility import _OFFSETS, SNAPEligibilityGenerator
 from govsynth.models.enums import Difficulty
 
 # EDGE_CASES.md Group A. These exist because models misapply them, which is
@@ -41,9 +40,7 @@ def test_adversarial_cases_actually_appear_in_generated_output():
     )
 
 
-def test_easy_is_reachable_from_the_offset_set():
-    from govsynth.generators.snap_eligibility import _OFFSETS
-
+def test_easy_is_reachable_from_the_offset_set() -> None:
     # _classify_difficulty returns EASY only when abs(offset) > 0.30.
     assert any(abs(o) > 0.30 for o in _OFFSETS), (
         f"no offset exceeds 0.30, so Difficulty.EASY is unreachable: {_OFFSETS}"
@@ -51,10 +48,20 @@ def test_easy_is_reachable_from_the_offset_set():
 
 
 @pytest.mark.parametrize("state", ["VA", "KS"])  # BBCE and non-BBCE
-def test_every_difficulty_level_is_producible(state):
+def test_every_difficulty_level_is_producible(state: str) -> None:
     """The test that would have caught all three bugs at once."""
     generator = SNAPEligibilityGenerator(state=state)
     cases = generator.generate(n=200, profile_strategy="edge_saturated", seed=11)
     produced = {c.difficulty for c in cases}
     missing = set(Difficulty) - produced
     assert not missing, f"{state}: these Difficulty levels are never produced: {missing}"
+
+
+@pytest.mark.parametrize("strategy", ["uniform", "realistic"])
+def test_threshold_free_profiles_are_not_labelled_easy(strategy: str) -> None:
+    """EASY asserts distance from a limit. Profiles sampled without an offset
+    have no known distance, so the label would be a fabrication."""
+    cases = SNAPEligibilityGenerator(state="VA").generate(
+        n=100, profile_strategy=strategy, seed=3
+    )
+    assert Difficulty.EASY not in {c.difficulty for c in cases}

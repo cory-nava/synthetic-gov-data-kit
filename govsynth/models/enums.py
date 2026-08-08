@@ -14,11 +14,26 @@ class TaskType(str, Enum):
 
 
 class Difficulty(str, Enum):
-    """Difficulty level of a test case."""
+    """Difficulty level of a test case.
 
+    This describes how hard the case is to reason about correctly, not which
+    program, state, or profile-sampling strategy produced it.
+    """
+
+    #: Household sits clearly clear of every relevant limit (known distance
+    #: from a threshold, well beyond it); the eligibility call has no
+    #: ambiguity a model could plausibly get wrong.
     EASY = "easy"
+    #: Either the household's distance from a threshold is unknown (profile
+    #: not sampled relative to any boundary), or a real complicating factor
+    #: (elderly/disabled status, BBCE state rules) makes the determination
+    #: nontrivial even when not at a hard boundary.
     MEDIUM = "medium"
+    #: Household sits within 1% of a named policy threshold: the correct
+    #: answer depends on getting the boundary condition exactly right.
     HARD = "hard"
+    #: A special-population edge case (EDGE_CASES.md Group A) that exists
+    #: specifically because models tend to misapply it.
     ADVERSARIAL = "adversarial"
 
 
