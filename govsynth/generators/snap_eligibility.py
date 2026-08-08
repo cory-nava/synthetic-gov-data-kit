@@ -7,6 +7,7 @@ including full rationale traces grounded in 7 CFR Part 273.
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 
 from govsynth.fiscal_year import DEFAULT_SNAP_FY, FiscalYearConfig
 from govsynth.generators.base import Generator
@@ -27,8 +28,12 @@ _SNAP_THRESHOLD_TYPES = [
     "asset_limit_elderly_disabled",
 ]
 
-# Offset values: at limit, just above, just below
-_OFFSETS = [0.0, 0.01, -0.01, 0.05, -0.05]
+# Offsets from a threshold, as a fraction. Values within +/-0.05 sit on the
+# boundary and drive HARD/MEDIUM classification; the +/-0.35 pair produces
+# households clearly clear of any limit, which is what EASY means here.
+# _classify_difficulty requires abs(offset) > 0.30 for EASY, so without these
+# that branch is unreachable.
+_OFFSETS = [0.0, 0.01, -0.01, 0.05, -0.05, 0.35, -0.35]
 
 _TASK_INSTRUCTION = (
     "Based on the household's situation described above, determine whether this household "
@@ -51,15 +56,32 @@ class SNAPEligibilityGenerator(Generator):
     Args:
         fiscal_year: Federal fiscal year for thresholds. Default: FY2026.
         state: State code. Controls BBCE asset test rules.
-        include_reasoning_trace: Always True for compatibility.
-        difficulty_distribution: Fraction of cases at each difficulty level.
+
+    Difficulty is not a caller-supplied target: it is derived from each generated
+    household profile, in a fixed order of precedence. A profile sampled without a
+    threshold offset has no known distance from a limit and falls back to MEDIUM.
+    Otherwise, sitting on the boundary (within 1% of a threshold) is checked first
+    and yields HARD -- even for an elderly/disabled household, since that check
+    runs before the special-population check. Only once the on-threshold check has
+    passed does elderly/disabled status force MEDIUM, regardless of how far from a
+    limit the household actually sits. A household with neither property that is
+    comfortably clear of every limit (more than 30% away) is EASY; every other case
+    is MEDIUM. The resulting mix of difficulty levels in the output is emergent, not
+    requested.
+
+    This description covers _classify_difficulty only. Under 'edge_saturated',
+    the special-population builders (homeless, student, boarder, migrant, mixed
+    immigration status, categorical eligibility, expanded BBCE income --
+    EDGE_CASES.md Group A) bypass _classify_difficulty entirely and stamp
+    ADVERSARIAL directly, since those cases exist because models tend to
+    misapply that specific rule, not because of any threshold distance. For a
+    typical 'edge_saturated' run, roughly 20% of output is ADVERSARIAL.
     """
 
     def __init__(
         self,
         fiscal_year: int = DEFAULT_SNAP_FY,
         state: str = "VA",
-        difficulty_distribution: dict[str, float] | None = None,
     ) -> None:
         self.fiscal_year = fiscal_year
         self.state = state.upper()
@@ -68,12 +90,6 @@ class SNAPEligibilityGenerator(Generator):
         # BBCE-aware source so per-state gross/asset rules apply.
         self.source = SNAPSource(fiscal_year=fiscal_year, state=state)
         self.bbce_source = SNAPBBCESource(fiscal_year=fiscal_year, state=state)
-        self.difficulty_distribution = difficulty_distribution or {
-            "easy": 0.15,
-            "medium": 0.30,
-            "hard": 0.40,
-            "adversarial": 0.15,
-        }
 
     @property
     def program(self) -> str:
@@ -111,7 +127,9 @@ class SNAPEligibilityGenerator(Generator):
                     case = self._build_case(profile, case_seed, i)
                     cases.append(case)
                 except Exception as exc:
-                    print(f"  Warning: skipped case {i} due to error: {exc}")
+                    raise RuntimeError(
+                        f"random-profile case builder failed while building case {i} of {n}: {exc}"
+                    ) from exc
             return cases
 
         # edge_saturated: two-phase split
@@ -129,7 +147,9 @@ class SNAPEligibilityGenerator(Generator):
                 case = self._build_case(profile, case_seed, i)
                 edge_cases.append(case)
             except Exception as exc:
-                print(f"  Warning: skipped edge case {i} due to error: {exc}")
+                raise RuntimeError(
+                    f"edge-saturated case builder failed while building edge case {i} of {n_edge}: {exc}"
+                ) from exc
 
         return special_cases + edge_cases
 
@@ -137,29 +157,39 @@ class SNAPEligibilityGenerator(Generator):
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _special_population_builders(
+        self,
+    ) -> list[tuple[str, Callable[[random.Random], TestCase]]]:
+        """Name/callable pairs for the 7 special-population builders.
+
+        Extracted so tests can inspect the pairing (name matches the callable's
+        __name__) without invoking any builder.
+        """
+        return [
+            ("_build_homeless_case", self._build_homeless_case),
+            ("_build_student_case", self._build_student_case),
+            ("_build_boarder_case", self._build_boarder_case),
+            ("_build_migrant_case", self._build_migrant_case),
+            ("_build_mixed_immigration_case", self._build_mixed_immigration_case),
+            ("_build_categorical_eligibility_case", self._build_categorical_eligibility_case),
+            ("_build_bbce_expanded_income_case", self._build_bbce_expanded_income_case),
+        ]
+
     def _build_special_population_cases(self, n: int, rng: random.Random) -> list[TestCase]:
         """Build n special-population edge cases, cycling through 7 types.
 
         When n < 7, cycles through first n types. When n >= 7, guarantees at least
         one case per type.
         """
-        builders = [
-            self._build_homeless_case,
-            self._build_student_case,
-            self._build_boarder_case,
-            self._build_migrant_case,
-            self._build_mixed_immigration_case,
-            self._build_categorical_eligibility_case,
-            self._build_bbce_expanded_income_case,
-        ]
+        builders = self._special_population_builders()
         cases: list[TestCase] = []
         for i in range(n):
-            builder = builders[i % len(builders)]
+            name, builder = builders[i % len(builders)]
             try:
                 case = builder(rng)
                 cases.append(case)
             except Exception as exc:
-                print(f"  Warning: skipped special case {i} due to error: {exc}")
+                raise RuntimeError(f"special-case builder {name!r} failed while building case {i}: {exc}") from exc
         return cases
 
     def _build_homeless_case(self, rng: random.Random) -> TestCase:
@@ -260,7 +290,7 @@ class SNAPEligibilityGenerator(Generator):
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person homeless household in {self.state} with "
@@ -375,7 +405,7 @@ class SNAPEligibilityGenerator(Generator):
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A college student enrolled half-time in {self.state} with ${gross:,.0f}/month "
@@ -509,7 +539,7 @@ class SNAPEligibilityGenerator(Generator):
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person household in {self.state} earns ${other_income:,.0f}/month in wages "
@@ -639,7 +669,7 @@ class SNAPEligibilityGenerator(Generator):
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person household in {self.state} with a migrant agricultural worker. "
@@ -793,7 +823,7 @@ class SNAPEligibilityGenerator(Generator):
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {total_members}-person household in {self.state} with mixed immigration status. "
@@ -907,7 +937,7 @@ class SNAPEligibilityGenerator(Generator):
             program=Program.SNAP.value,
             jurisdiction=f"us.{self.state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person household in {self.state} with ${gross:,.0f}/month gross income "
@@ -1133,7 +1163,7 @@ class SNAPEligibilityGenerator(Generator):
             program=Program.SNAP.value,
             jurisdiction=f"us.{state.lower()}",
             task_type=TaskType.ELIGIBILITY,
-            difficulty=Difficulty.HARD,
+            difficulty=Difficulty.ADVERSARIAL,
             scenario=ScenarioBlock(
                 summary=(
                     f"A {hh_size}-person household in {state} with ${gross:,.0f}/month gross income "
@@ -1597,22 +1627,31 @@ class SNAPEligibilityGenerator(Generator):
             )
 
     def _classify_difficulty(self, profile: USHouseholdProfile, is_eligible: bool) -> Difficulty:
-        threshold_type = profile.extra.get("threshold_type", "")
-        offset = profile.extra.get("offset_pct", 0.5)
+        offset = profile.extra.get("offset_pct")
+        if offset is None:
+            # Sampled independently of any threshold: we do not know how far this
+            # household sits from a limit, so we must not claim it is clear of one.
+            return Difficulty.MEDIUM
 
-        if abs(offset) <= 0.01 and threshold_type:
+        # No `and threshold_type` conjunct here: the two callers that populate
+        # offset_pct (_build_snap_threshold_profile, _build_wic_threshold_profile
+        # in us_household.py) always set threshold_type in the same extra dict,
+        # so by the time offset is not None, threshold_type is never falsy.
+        if abs(offset) <= 0.01:
             return Difficulty.HARD
-        elif profile.has_elderly_or_disabled or self.bbce_source.is_bbce:
+        # Elderly/disabled changes four computations (gross test waived, medical
+        # deduction, uncapped excess shelter, different asset cap) no matter how far
+        # the household sits from a limit. It is a per-household property, unlike
+        # is_bbce, which is constant per generator and is already a variation tag.
+        if profile.has_elderly_or_disabled:
             return Difficulty.MEDIUM
-        elif abs(offset) > 0.30:
+        if abs(offset) > 0.30:
             return Difficulty.EASY
-        else:
-            return Difficulty.MEDIUM
+        return Difficulty.MEDIUM
 
     def _make_case_id(self, profile: USHouseholdProfile, is_eligible: bool, index: int, seed: int | None) -> str:
         threshold = profile.extra.get("threshold_type", "general")
-        offset = profile.extra.get("offset_pct", 0.0)
-        offset_tag = "at_limit" if offset == 0.0 else "above_limit" if offset > 0 else "below_limit"
+        offset = profile.extra.get("offset_pct")
         outcome = "eligible" if is_eligible else "ineligible"
         hh = f"hh{profile.household_size}"
         # Combine seed and index so cases within the same batch don't collide
@@ -1620,7 +1659,33 @@ class SNAPEligibilityGenerator(Generator):
         # non-deterministic behavior (a fresh os-random seed per call).
         uid_seed = f"{seed}-{index}" if seed is not None else None
         uid = build_short_uid(random.Random(uid_seed))
-        return f"snap.{self.state.lower()}.eligibility.{threshold}.{offset_tag}.{outcome}.{hh}.{uid}"
+        # Mirror _build_variation_tags: when offset_pct is unset (e.g. 'uniform'
+        # / 'realistic' strategies with extra == {}), we have no known distance
+        # from any threshold, so omit the offset segment entirely rather than
+        # defaulting to 0.0 and fabricating an "at_limit" claim.
+        segments = ["snap", self.state.lower(), "eligibility", threshold]
+        if offset is not None:
+            segments.append(self._offset_tag(offset))
+        segments.extend([outcome, hh, uid])
+        return ".".join(segments)
+
+    @staticmethod
+    def _offset_tag(offset: float) -> str:
+        """Bucket an offset_pct for case IDs / variation tags.
+
+        Buckets by both sign and magnitude: a 1% offset and a 35% offset both
+        have offset > 0, but only the former is actually "at the boundary."
+        Collapsing them to the same "above_limit"/"below_limit" tag would let
+        a consumer filtering for boundary cases silently pull in far-from-limit
+        ones too (see the widened _OFFSETS set, which now includes +/-0.35).
+        """
+        if offset == 0.0:
+            return "at_limit"
+        if offset > 0.30:
+            return "well_above_limit"
+        if offset < -0.30:
+            return "well_below_limit"
+        return "above_limit" if offset > 0 else "below_limit"
 
     def _build_variation_tags(self, profile: USHouseholdProfile) -> list[str]:
         tags: list[str] = []
@@ -1630,12 +1695,7 @@ class SNAPEligibilityGenerator(Generator):
         if threshold:
             tags.append(threshold)
         if offset is not None:
-            if offset == 0.0:
-                tags.append("at_limit")
-            elif offset > 0:
-                tags.append("above_limit")
-            else:
-                tags.append("below_limit")
+            tags.append(self._offset_tag(offset))
         if profile.has_elderly_or_disabled:
             tags.append("elderly_or_disabled")
             tags.append("gross_income_test_waived")
