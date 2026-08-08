@@ -128,8 +128,7 @@ class SNAPEligibilityGenerator(Generator):
                     cases.append(case)
                 except Exception as exc:
                     raise RuntimeError(
-                        f"random-profile case builder failed while building case {i} "
-                        f"of {n}: {exc}"
+                        f"random-profile case builder failed while building case {i} of {n}: {exc}"
                     ) from exc
             return cases
 
@@ -149,8 +148,7 @@ class SNAPEligibilityGenerator(Generator):
                 edge_cases.append(case)
             except Exception as exc:
                 raise RuntimeError(
-                    f"edge-saturated case builder failed while building edge case {i} "
-                    f"of {n_edge}: {exc}"
+                    f"edge-saturated case builder failed while building edge case {i} of {n_edge}: {exc}"
                 ) from exc
 
         return special_cases + edge_cases
@@ -191,9 +189,7 @@ class SNAPEligibilityGenerator(Generator):
                 case = builder(rng)
                 cases.append(case)
             except Exception as exc:
-                raise RuntimeError(
-                    f"special-case builder {name!r} failed while building case {i}: {exc}"
-                ) from exc
+                raise RuntimeError(f"special-case builder {name!r} failed while building case {i}: {exc}") from exc
         return cases
 
     def _build_homeless_case(self, rng: random.Random) -> TestCase:

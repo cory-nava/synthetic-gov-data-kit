@@ -1,10 +1,12 @@
 """Difficulty labelling must be honest: every level producible, edge cases adversarial."""
 
 import collections
+from typing import NoReturn
 
 import pytest
 from govsynth.generators.snap_eligibility import _OFFSETS, SNAPEligibilityGenerator
 from govsynth.models.enums import Difficulty
+from govsynth.profiles.us_household import USHouseholdProfile
 
 # EDGE_CASES.md Group A. These exist because models misapply them, which is
 # what ADVERSARIAL means in this kit.
@@ -20,7 +22,7 @@ EDGE_CASE_BUILDERS = [
 
 
 @pytest.mark.parametrize("builder_name", EDGE_CASE_BUILDERS)
-def test_each_edge_case_builder_emits_adversarial(builder_name):
+def test_each_edge_case_builder_emits_adversarial(builder_name: str) -> None:
     import random
 
     generator = SNAPEligibilityGenerator(state="VA")
@@ -31,13 +33,11 @@ def test_each_edge_case_builder_emits_adversarial(builder_name):
     )
 
 
-def test_adversarial_cases_actually_appear_in_generated_output():
+def test_adversarial_cases_actually_appear_in_generated_output() -> None:
     generator = SNAPEligibilityGenerator(state="VA")
     cases = generator.generate(n=60, profile_strategy="edge_saturated", seed=7)
     counts = collections.Counter(c.difficulty for c in cases)
-    assert counts[Difficulty.ADVERSARIAL] > 0, (
-        f"no adversarial cases in 60 generated: {dict(counts)}"
-    )
+    assert counts[Difficulty.ADVERSARIAL] > 0, f"no adversarial cases in 60 generated: {dict(counts)}"
 
 
 def test_easy_is_reachable_from_the_offset_set() -> None:
@@ -61,9 +61,7 @@ def test_every_difficulty_level_is_producible(state: str) -> None:
 def test_threshold_free_profiles_are_not_labelled_easy(strategy: str) -> None:
     """EASY asserts distance from a limit. Profiles sampled without an offset
     have no known distance, so the label would be a fabrication."""
-    cases = SNAPEligibilityGenerator(state="VA").generate(
-        n=100, profile_strategy=strategy, seed=3
-    )
+    cases = SNAPEligibilityGenerator(state="VA").generate(n=100, profile_strategy=strategy, seed=3)
     assert Difficulty.EASY not in {c.difficulty for c in cases}
 
 
@@ -79,7 +77,7 @@ def test_elderly_disabled_households_are_never_easy_however_far_from_a_limit() -
     assert all(c.difficulty != Difficulty.EASY for c in elderly)
 
 
-def test_generator_does_not_accept_a_distribution_it_cannot_honour():
+def test_generator_does_not_accept_a_distribution_it_cannot_honour() -> None:
     """difficulty_distribution was accepted, documented, and never read.
 
     Difficulty is derived from the profile, not requested. Accepting the
@@ -89,15 +87,14 @@ def test_generator_does_not_accept_a_distribution_it_cannot_honour():
         SNAPEligibilityGenerator(state="VA", difficulty_distribution={"easy": 1.0})
 
 
-def test_difficulty_is_documented_as_derived():
+def test_difficulty_is_documented_as_derived() -> None:
     doc = SNAPEligibilityGenerator.__init__.__doc__ or SNAPEligibilityGenerator.__doc__ or ""
     assert "derived" in doc.lower() or "emergent" in doc.lower(), (
-        "the constructor docs should say difficulty is derived from the profile, "
-        "not requested by the caller"
+        "the constructor docs should say difficulty is derived from the profile, not requested by the caller"
     )
 
 
-def test_constructor_docstring_documents_exactly_its_parameters():
+def test_constructor_docstring_documents_exactly_its_parameters() -> None:
     """A docstring naming a parameter the constructor does not accept is the
     same defect as a label naming data it does not contain.
     """
@@ -116,17 +113,18 @@ def test_constructor_docstring_documents_exactly_its_parameters():
     documented = {d for d in documented if d.isidentifier()}
 
     assert documented == actual, (
-        f"documented but absent: {documented - actual}; "
-        f"present but undocumented: {actual - documented}"
+        f"documented but absent: {documented - actual}; present but undocumented: {actual - documented}"
     )
 
 
-def test_a_failing_edge_case_builder_is_not_silently_swallowed(monkeypatch):
+def test_a_failing_edge_case_builder_is_not_silently_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import random
 
     generator = SNAPEligibilityGenerator(state="VA")
 
-    def boom(_rng):
+    def boom(_rng: random.Random) -> NoReturn:
         raise ValueError("builder exploded")
 
     monkeypatch.setattr(generator, "_build_homeless_case", boom)
@@ -135,7 +133,7 @@ def test_a_failing_edge_case_builder_is_not_silently_swallowed(monkeypatch):
         generator._build_special_population_cases(7, random.Random(0))
 
 
-def test_builder_names_match_their_callables():
+def test_builder_names_match_their_callables() -> None:
     """The builders list carries names as strings parallel to the methods.
 
     A rename would leave the string stale and nothing else would notice.
@@ -146,7 +144,9 @@ def test_builder_names_match_their_callables():
         assert name == builder.__name__
 
 
-def test_random_profile_case_failure_is_not_silently_swallowed(monkeypatch):
+def test_random_profile_case_failure_is_not_silently_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """generate() with a non-edge-saturated strategy calls _build_case in a
     loop. A failure there must raise, not be print-and-skipped -- a caller
     reducing the requested n silently is exactly the defect this branch
@@ -154,7 +154,7 @@ def test_random_profile_case_failure_is_not_silently_swallowed(monkeypatch):
     """
     generator = SNAPEligibilityGenerator(state="VA")
 
-    def boom(profile, seed, index):
+    def boom(profile: USHouseholdProfile, seed: int | None, index: int) -> NoReturn:
         raise ValueError("case builder exploded")
 
     monkeypatch.setattr(generator, "_build_case", boom)
@@ -163,7 +163,9 @@ def test_random_profile_case_failure_is_not_silently_swallowed(monkeypatch):
         generator.generate(n=3, profile_strategy="uniform", seed=1)
 
 
-def test_edge_saturated_regular_case_failure_is_not_silently_swallowed(monkeypatch):
+def test_edge_saturated_regular_case_failure_is_not_silently_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """generate() with profile_strategy='edge_saturated' builds special-
     population cases first, then regular edge-boundary cases via _build_case.
     A failure in that second loop must raise too, with a message that says
@@ -172,7 +174,7 @@ def test_edge_saturated_regular_case_failure_is_not_silently_swallowed(monkeypat
     """
     generator = SNAPEligibilityGenerator(state="VA")
 
-    def boom(profile, seed, index):
+    def boom(profile: USHouseholdProfile, seed: int | None, index: int) -> NoReturn:
         raise ValueError("case builder exploded")
 
     monkeypatch.setattr(generator, "_build_case", boom)
@@ -183,7 +185,7 @@ def test_edge_saturated_regular_case_failure_is_not_silently_swallowed(monkeypat
         generator.generate(n=10, profile_strategy="edge_saturated", seed=1)
 
 
-def test_uniform_strategy_case_ids_never_claim_at_limit():
+def test_uniform_strategy_case_ids_never_claim_at_limit() -> None:
     """offset_pct is absent (extra == {}) for 'uniform'/'realistic' profiles,
     so there is no known distance from a threshold. _make_case_id must not
     default the missing offset to 0.0 and stamp 'at_limit' into the ID --
@@ -193,9 +195,7 @@ def test_uniform_strategy_case_ids_never_claim_at_limit():
     generator = SNAPEligibilityGenerator(state="VA")
     cases = generator.generate(n=50, profile_strategy="uniform", seed=5)
     offending = [c.case_id for c in cases if "at_limit" in c.case_id]
-    assert not offending, (
-        f"uniform-strategy case IDs fabricate 'at_limit' despite no known offset: {offending}"
-    )
+    assert not offending, f"uniform-strategy case IDs fabricate 'at_limit' despite no known offset: {offending}"
 
 
 @pytest.mark.parametrize("offset", [0.01, -0.01])
