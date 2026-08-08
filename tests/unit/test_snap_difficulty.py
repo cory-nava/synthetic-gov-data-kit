@@ -95,3 +95,27 @@ def test_difficulty_is_documented_as_derived():
         "the constructor docs should say difficulty is derived from the profile, "
         "not requested by the caller"
     )
+
+
+def test_constructor_docstring_documents_exactly_its_parameters():
+    """A docstring naming a parameter the constructor does not accept is the
+    same defect as a label naming data it does not contain.
+    """
+    import inspect
+
+    signature = inspect.signature(SNAPEligibilityGenerator.__init__)
+    actual = {p for p in signature.parameters if p != "self"}
+
+    doc = SNAPEligibilityGenerator.__doc__ or ""
+    args_block = doc.split("Args:", 1)[1] if "Args:" in doc else ""
+    documented = {
+        line.strip().split(":", 1)[0].strip()
+        for line in args_block.splitlines()
+        if line.strip() and ":" in line and line.startswith(" " * 8)
+    }
+    documented = {d for d in documented if d.isidentifier()}
+
+    assert documented == actual, (
+        f"documented but absent: {documented - actual}; "
+        f"present but undocumented: {actual - documented}"
+    )
