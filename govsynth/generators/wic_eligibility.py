@@ -317,8 +317,17 @@ class WICEligibilityGenerator(Generator):
 
     def _classify_difficulty(self, profile: USHouseholdProfile, is_cat: bool) -> Difficulty:
         if is_cat:
-            return Difficulty.EASY
-        offset = profile.extra.get("offset_pct", 0.5)
+            # Categorical eligibility bypasses the 185% FPL income test outright --
+            # the household's distance from that limit was never evaluated. That is
+            # not "clearly clear of every limit" (EASY); it is the same "computation
+            # changed regardless of distance" population SNAP labels MEDIUM for
+            # elderly/disabled households (see Difficulty.MEDIUM's docstring).
+            return Difficulty.MEDIUM
+        offset = profile.extra.get("offset_pct")
+        if offset is None:
+            # Sampled independently of any threshold: we do not know how far this
+            # household sits from a limit, so we must not claim it is clear of one.
+            return Difficulty.MEDIUM
         if abs(offset) <= 0.01:
             return Difficulty.HARD
         if abs(offset) <= 0.05:
@@ -326,12 +335,20 @@ class WICEligibilityGenerator(Generator):
         return Difficulty.EASY
 
     def _make_id(self, profile: USHouseholdProfile, category: str, is_eligible: bool, rng: random.Random) -> str:
-        offset = profile.extra.get("offset_pct", 0.0)
-        offset_tag = "at_limit" if offset == 0.0 else ("above_limit" if offset > 0 else "below_limit")
+        # offset_pct is absent (extra == {}) for 'uniform'/'realistic' profiles, so
+        # there is no known distance from a threshold. Defaulting it to 0.0 would
+        # fabricate an "at_limit" claim the profile does not know to be true --
+        # mirror _build_tags below and omit the segment entirely instead.
+        offset = profile.extra.get("offset_pct")
         outcome = "eligible" if is_eligible else "ineligible"
         uid = build_short_uid(rng)
         state = (self.state if self.state != "national" else "national").lower()
-        return f"wic.{state}.eligibility.{category}.{offset_tag}.{outcome}.hh{profile.household_size}.{uid}"
+        segments = ["wic", state, "eligibility", category]
+        if offset is not None:
+            offset_tag = "at_limit" if offset == 0.0 else ("above_limit" if offset > 0 else "below_limit")
+            segments.append(offset_tag)
+        segments.extend([outcome, f"hh{profile.household_size}", uid])
+        return ".".join(segments)
 
     def _build_tags(self, profile: USHouseholdProfile, category: str, is_cat: bool) -> list[str]:
         tags = [category, "income_test_185pct_fpl"]
