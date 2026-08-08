@@ -144,3 +144,89 @@ def test_builder_names_match_their_callables():
     # Reach the list without invoking any builder.
     for name, builder in generator._special_population_builders():
         assert name == builder.__name__
+
+
+def test_random_profile_case_failure_is_not_silently_swallowed(monkeypatch):
+    """generate() with a non-edge-saturated strategy calls _build_case in a
+    loop. A failure there must raise, not be print-and-skipped -- a caller
+    reducing the requested n silently is exactly the defect this branch
+    exists to eliminate.
+    """
+    generator = SNAPEligibilityGenerator(state="VA")
+
+    def boom(profile, seed, index):
+        raise ValueError("case builder exploded")
+
+    monkeypatch.setattr(generator, "_build_case", boom)
+
+    with pytest.raises(RuntimeError, match="random-profile"):
+        generator.generate(n=3, profile_strategy="uniform", seed=1)
+
+
+def test_edge_saturated_regular_case_failure_is_not_silently_swallowed(monkeypatch):
+    """generate() with profile_strategy='edge_saturated' builds special-
+    population cases first, then regular edge-boundary cases via _build_case.
+    A failure in that second loop must raise too, with a message that says
+    'edge-saturated' rather than 'random-profile' so the two paths stay
+    distinguishable in a traceback.
+    """
+    generator = SNAPEligibilityGenerator(state="VA")
+
+    def boom(profile, seed, index):
+        raise ValueError("case builder exploded")
+
+    monkeypatch.setattr(generator, "_build_case", boom)
+
+    # n=10 with the 20%-special-case split forces n_special=7, n_edge=3, so
+    # the regular edge-case loop (which calls _build_case) is reached.
+    with pytest.raises(RuntimeError, match="edge-saturated"):
+        generator.generate(n=10, profile_strategy="edge_saturated", seed=1)
+
+
+def test_uniform_strategy_case_ids_never_claim_at_limit():
+    """offset_pct is absent (extra == {}) for 'uniform'/'realistic' profiles,
+    so there is no known distance from a threshold. _make_case_id must not
+    default the missing offset to 0.0 and stamp 'at_limit' into the ID --
+    that would assert something the profile does not know, contradicting
+    _build_variation_tags, which correctly emits no offset tag at all.
+    """
+    generator = SNAPEligibilityGenerator(state="VA")
+    cases = generator.generate(n=50, profile_strategy="uniform", seed=5)
+    offending = [c.case_id for c in cases if "at_limit" in c.case_id]
+    assert not offending, (
+        f"uniform-strategy case IDs fabricate 'at_limit' despite no known offset: {offending}"
+    )
+
+
+@pytest.mark.parametrize("offset", [0.01, -0.01])
+def test_offset_at_one_percent_boundary_is_hard(offset: float) -> None:
+    """HARD's defining boundary is abs(offset) <= 0.01. A ±0.01 case must
+    still be HARD; tightening the comparison to '<' would silently exclude
+    the exact values the boundary is named after.
+    """
+    from govsynth.profiles.us_household import USHouseholdProfile
+
+    generator = SNAPEligibilityGenerator(state="VA")
+    profile = USHouseholdProfile(
+        household_size=3,
+        monthly_gross_income=2000.0,
+        state="VA",
+        extra={"threshold_type": "gross_income_limit", "offset_pct": offset},
+    )
+    assert generator._classify_difficulty(profile, is_eligible=True) == Difficulty.HARD
+
+
+@pytest.mark.parametrize(
+    "offset,expected_tag",
+    [
+        (0.35, "well_above_limit"),
+        (-0.35, "well_below_limit"),
+    ],
+)
+def test_offset_tag_buckets_far_from_limit_separately(offset: float, expected_tag: str) -> None:
+    """_offset_tag must distinguish a household clearly clear of a limit
+    (e.g. +/-0.35, which is what makes EASY reachable) from one merely above
+    or below it. Collapsing the two would let a consumer filtering case IDs
+    for boundary cases silently pull in far-from-limit ones too.
+    """
+    assert SNAPEligibilityGenerator._offset_tag(offset) == expected_tag
