@@ -65,3 +65,15 @@ def test_threshold_free_profiles_are_not_labelled_easy(strategy: str) -> None:
         n=100, profile_strategy=strategy, seed=3
     )
     assert Difficulty.EASY not in {c.difficulty for c in cases}
+
+
+def test_elderly_disabled_households_are_never_easy_however_far_from_a_limit() -> None:
+    """has_elderly_or_disabled changes four computations -- gross test waived,
+    medical deduction, uncapped excess shelter, different asset cap -- so these
+    cases are never EASY regardless of offset magnitude.
+    """
+    generator = SNAPEligibilityGenerator(state="KS")  # non-BBCE: asset-threshold
+    cases = generator.generate(n=200, profile_strategy="edge_saturated", seed=11)
+    elderly = [c for c in cases if c.scenario.has_elderly_or_disabled]
+    assert elderly, "fixture assumption broken: no elderly/disabled cases generated"
+    assert all(c.difficulty != Difficulty.EASY for c in elderly)
