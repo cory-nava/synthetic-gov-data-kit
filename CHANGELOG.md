@@ -78,6 +78,36 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   supported runtime version) and adding `types-PyYAML` to the `dev` extra so the PyYAML
   stub-missing errors it was masking don't resurface once mypy gets past the numpy blocker.
 - Corrected stale BBCE state classification: TN/UT/WY are not BBCE; TX/VA are (per FNS Aug 2025)
+- `data/thresholds/snap_bbce_fy2026.json`'s `verification_note` and
+  `data/seeds/us/snap/eligibility_rules_fy2026.txt` both hardcoded "45 BBCE jurisdictions"
+  while the note's own breakdown ("43 states + DC + GU + VI") already summed to 46,
+  matching the actual 46 `bbce: true` entries in the data. Re-verified against FRAC's
+  FNS-sourced BBCE table and USDA's State Options Report (17th Edition) plus the Alaska
+  (HB 344, effective 2025-07-01) and Arkansas (Act 675) BBCE-adoption citations that
+  explain the move from 44 to 46 jurisdictions since the report's October 2024 data
+  reference: **this was a prose transcription typo, not a data error** — no `bbce` flag
+  was changed. Also corrected `_metadata`, which claimed a CBPP cross-check that was
+  never actually performed at authoring time; added a `reverification_2026_08` block
+  documenting what this pass did and didn't verify (CBPP and the original FNS chart PDF
+  were both unreachable), and marked `source_chart_url` dead (404) instead of silently
+  dropping it. Added `TestVerificationNoteMatchesData` in `test_snap_bbce_source.py` to
+  pin the prose count against the live data so it cannot drift again.
+- WIC's `_classify_difficulty` (in `govsynth/generators/wic_eligibility.py`) carried the
+  same sentinel-fabrication defect already fixed in SNAP: a missing `offset_pct`
+  defaulted to `0.5` instead of `MEDIUM`, and categorical eligibility (which bypasses the
+  income test outright) returned `EASY` despite never measuring distance from any
+  threshold. Also fixed the same defect in `_make_id`, which defaulted `offset_pct` to
+  `0.0` and fabricated an `"at_limit"` tag. Added `tests/unit/test_wic_difficulty.py`
+  mirroring `test_snap_difficulty.py`.
+- Notebooks `01`, `02`, `07`, and `08` narrated or executed against stale pre-BBCE-fix
+  SNAP behavior (e.g. describing Texas as "strict federal" when it is actually BBCE with
+  a $5,000 asset cap). Narration corrected, BBCE-sensitive demos swapped to
+  `SNAPBBCESource`, and two boundary-flip demos moved to Kansas (non-BBCE) where the
+  federal 130%/100% flip actually holds; notebooks re-executed so committed outputs
+  match current behavior.
+- `notebooks/01_quickstart.ipynb` had ten markdown cells carrying a stray `"outputs": []`
+  key — invalid under nbformat v4, since only code cells may have `outputs` — which made
+  `nbformat.validate()` fail. Stripped the key; all notebooks now validate.
 - `LICENSE` — added full MIT license text with copyright year and holder
 - `pyproject.toml` — replaced `your-org` placeholder URLs with actual repository paths
 - `CONTRIBUTING.md` — corrected clone URL placeholder
@@ -85,6 +115,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   and batch generation Python API example
 
 ### Changed
+- **Behavior change:** WIC categorical-eligibility cases, which previously fabricated
+  `Difficulty.EASY`, are now classified `Difficulty.MEDIUM` — the same fix already
+  applied to SNAP. Categorical eligibility bypasses the income test outright, so these
+  cases were never actually easy by threshold-proximity; the label was wrong, not the
+  new behavior. **Any WIC corpus generated before this fix will show different
+  difficulty labels for categorical-eligibility cases on regeneration.**
 - `SNAPSource` reduced to the federal baseline (130% FPL gross, 100% FPL net, $3,000/$4,500 assets). The stale hardcoded `BBCE_STATES`/`STRICT_ASSET_TEST_STATES` sets were removed; BBCE is now modeled exclusively by `SNAPBBCESource`, which the SNAP generator uses for the main threshold path and the BBCE edge case. **Behavior change:** SNAP cases for BBCE states now apply the state's raised gross limit and correct asset rule (e.g. TX is now correctly BBCE at 165% FPL / $5,000 cap rather than federal strict).
 - **BREAKING:** `SNAPEligibilityGenerator.__init__` no longer accepts `difficulty_distribution`. The parameter was accepted and documented but never read — `Difficulty` is derived from each generated profile, not requested by the caller. Passing it now raises `TypeError`.
 - EDGE_CASES.md Group A special-population cases (homeless, student, boarder, migrant, mixed immigration status, categorical eligibility, expanded BBCE income) now emit `difficulty: adversarial` instead of `difficulty: hard`. These exist because models tend to misapply the specific rule, not because of proximity to a threshold, so `hard` mischaracterized them.
