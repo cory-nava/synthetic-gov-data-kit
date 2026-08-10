@@ -11,9 +11,11 @@ State roles used here:
 """
 
 import math
+import re
 
 import pytest
-from govsynth.sources.us.snap_bbce import SNAPBBCESource
+from govsynth.sources.base import SEED_DIR
+from govsynth.sources.us.snap_bbce import SNAPBBCESource, _load_bbce_table, bbce_states
 
 
 @pytest.fixture
@@ -187,3 +189,45 @@ class TestDerivationMethodIntegrity:
         # rebuild via a temp source whose pct we assert against the formula
         assert src._fpl_annual(size) == annual
         assert math.ceil(src._fpl_annual(size) * pct / 100 / 12) == expected
+
+
+class TestVerificationNoteMatchesData:
+    """Pin the prose BBCE counts to the actual data so they cannot drift apart.
+
+    Confirmed against the USDA FNS BBCE States Chart (Aug 2025), cross-checked with
+    the FRAC BBCE table (sourced from USDA FNA, accessed June 2026): 46 jurisdictions
+    (43 states + DC + GU + VI) have adopted BBCE. If a future data edit changes which
+    states are BBCE, this test forces the prose in both the threshold JSON's
+    verification_note and the eligibility_rules seed file to be updated to match —
+    rather than silently going stale as happened with "45" vs. the actual 46.
+    """
+
+    def test_actual_bbce_count_is_46(self) -> None:
+        # Sanity-pins the real count against a hand-verified external source, so a
+        # bad data edit (e.g. flipping a state's bbce flag) is caught here too.
+        states = bbce_states(2026)
+        assert len(states) == 46
+
+    def test_verification_note_headline_matches_data_count(self) -> None:
+        table = _load_bbce_table(2026)
+        note = table["_metadata"]["verification_note"]
+        match = re.search(r"(\d+)\s+BBCE jurisdictions", note)
+        assert match, f"Could not find a 'N BBCE jurisdictions' count in: {note!r}"
+        headline_count = int(match.group(1))
+        assert headline_count == len(bbce_states(2026))
+
+    def test_verification_note_breakdown_sums_to_data_count(self) -> None:
+        table = _load_bbce_table(2026)
+        note = table["_metadata"]["verification_note"]
+        match = re.search(r"\((\d+)\s+states\s+\+\s+DC\s+\+\s+GU\s+\+\s+VI\)", note)
+        assert match, f"Could not find a '(N states + DC + GU + VI)' breakdown in: {note!r}"
+        states_count = int(match.group(1))
+        breakdown_total = states_count + 1 + 1 + 1  # + DC + GU + VI
+        assert breakdown_total == len(bbce_states(2026))
+
+    def test_eligibility_rules_seed_matches_data_count(self) -> None:
+        seed_path = SEED_DIR / "us" / "snap" / "eligibility_rules_fy2026.txt"
+        text = seed_path.read_text()
+        match = re.search(r"(\d+)\s+jurisdictions had adopted\s*\n?\s*BBCE", text)
+        assert match, "Could not find 'N jurisdictions had adopted BBCE' in eligibility_rules_fy2026.txt"
+        assert int(match.group(1)) == len(bbce_states(2026))
