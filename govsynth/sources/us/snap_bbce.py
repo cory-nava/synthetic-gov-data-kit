@@ -34,10 +34,20 @@ from govsynth.sources.base import THRESHOLD_DIR, ProgramThresholds, _load_json_f
 from govsynth.sources.us.snap import SNAPSource, _region_for_state
 
 # Maps the SNAP region key (from snap._region_for_state) to the FPL file region key.
+#
+# GU and VI intentionally map to contiguous_48_dc, not a territory-specific FPL region:
+# the FY2026 COLA memo's 100%/130%/165% poverty-percentage income tables print one
+# shared column headed "48 States, D.C., Guam, Virgin Islands" (p.3). Only the *benefit*
+# side (max allotment, standard deduction, excess shelter cap, minimum benefit) is
+# territory-specific for GU/VI — see data/thresholds/snap_fy2026.json. Getting this
+# mapping backwards would silently change every GU/VI income threshold, which the memo
+# does not support.
 _SNAP_REGION_TO_FPL_REGION: dict[str, str] = {
     "48_states_dc": "contiguous_48_dc",
     "alaska": "alaska",
     "hawaii": "hawaii",
+    "guam": "contiguous_48_dc",
+    "virgin_islands": "contiguous_48_dc",
 }
 
 

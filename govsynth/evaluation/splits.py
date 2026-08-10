@@ -25,6 +25,14 @@ only has to not key on the state's name. The sharper question is whether it can
 apply a parameter combination it has never seen at all -- a 175% FPL gross limit,
 a $25,000 asset limit -- and those two questions have different answers.
 
+"Parameter combination" (see `parameter_bucket`) means BBCE gross-limit/asset-cap
+*and* region: two jurisdictions can share the former while running on distinct
+allotment schedules, standard deductions, shelter caps, and minimum benefits
+(Guam and Illinois both sit at 165% FPL/no asset cap, but Guam's benefit-side
+numbers are Guam's own). Without region in the bucket, Guam's holdout would
+silently collapse into the first kind of question -- unfamiliar name only --
+even though its allotment table is genuinely unseen.
+
 So each test case is labelled with which question it answers:
 
   in_distribution                       jurisdiction appears in train
@@ -68,12 +76,23 @@ class Split:
 
 
 def parameter_bucket(state: str, *, fiscal_year: int = DEFAULT_SNAP_FY) -> tuple[Any, ...]:
-    """Return the BBCE parameter combination for a jurisdiction.
+    """Return the (region, BBCE parameter) combination for a jurisdiction.
 
     Two jurisdictions with the same bucket are, as far as the eligibility
     waterfall is concerned, the same problem wearing a different name:
-    ``("non_bbce",)`` for a jurisdiction that has not adopted BBCE, or
-    ``(gross_income_limit_pct_fpl, asset_limit)`` for one that has.
+    ``(region, "non_bbce")`` for a jurisdiction that has not adopted BBCE, or
+    ``(region, gross_income_limit_pct_fpl, asset_limit)`` for one that has.
+
+    Region is part of the bucket, not just the BBCE parameters, because two
+    jurisdictions can share a gross-income-limit/asset-limit combination while
+    running on entirely different allotment schedules, standard deductions,
+    excess shelter caps, and minimum benefits. Guam and Illinois are both
+    (165% FPL gross, no asset cap) BBCE, but Guam has its own max allotment,
+    standard deduction, and shelter cap (see data/thresholds/snap_fy2026.json)
+    -- collapsing them into one bucket would make Guam's holdout test whether
+    the model can recognize an unfamiliar state code, not whether it can apply
+    parameters it has genuinely never seen. Keying on region as well makes
+    that a real unseen-parameter probe instead of an unseen-jurisdiction one.
 
     Raises ValueError for a jurisdiction the FY table does not cover --
     notably PR, which runs the Nutrition Assistance Program (a block grant)
@@ -87,16 +106,19 @@ def parameter_bucket(state: str, *, fiscal_year: int = DEFAULT_SNAP_FY) -> tuple
     being rejected. Detect the fallback explicitly.
     """
     code = state.upper()
-    params = SNAPBBCESource(fiscal_year=fiscal_year, state=code).bbce_params
+    source = SNAPBBCESource(fiscal_year=fiscal_year, state=code)
+    params = source.bbce_params
     if params.state == "FEDERAL":
         raise ValueError(
             f"{code!r} is not in the FY{fiscal_year} BBCE table; SNAPBBCESource fell "
             "back to federal_default. Puerto Rico runs the Nutrition Assistance "
             "Program, not SNAP, and must not appear in either partition."
         )
+    extra = source.thresholds().extra
+    region = extra["region"] if extra else "48_states_dc"
     if not params.bbce:
-        return ("non_bbce",)
-    return (params.gross_income_limit_pct_fpl, params.asset_limit)
+        return (region, "non_bbce")
+    return (region, params.gross_income_limit_pct_fpl, params.asset_limit)
 
 
 def split_cases(

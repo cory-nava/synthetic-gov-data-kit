@@ -180,43 +180,71 @@ def test_stale_holdout_category_does_not_survive_a_second_split(mixed_cases: lis
 
 
 def test_parameter_bucket_separates_bbce_from_non_bbce() -> None:
-    assert parameter_bucket("KS", fiscal_year=2026) == ("non_bbce",)
-    assert parameter_bucket("CA", fiscal_year=2026) == (200, None)
-    assert parameter_bucket("NE", fiscal_year=2026) == (165, 25000)
+    assert parameter_bucket("KS", fiscal_year=2026) == ("48_states_dc", "non_bbce")
+    assert parameter_bucket("CA", fiscal_year=2026) == ("48_states_dc", 200, None)
+    assert parameter_bucket("NE", fiscal_year=2026) == ("48_states_dc", 165, 25000)
 
 
 def test_jurisdictions_sharing_a_bucket_compare_equal() -> None:
-    assert parameter_bucket("GU", fiscal_year=2026) == parameter_bucket("IL", fiscal_year=2026)
+    # AL and GA are both (130% FPL gross, no asset cap) BBCE in the 48-states region --
+    # a genuinely same-bucket-same-region pair, unlike GU/IL (see
+    # test_gu_becomes_unseen_pattern_once_region_is_part_of_the_bucket below).
+    assert parameter_bucket("AL", fiscal_year=2026) == parameter_bucket("GA", fiscal_year=2026)
+
+
+def test_gu_and_il_no_longer_share_a_bucket() -> None:
+    # Before region was part of the bucket, GU's block was byte-identical to IL's BBCE
+    # parameters (both 165% FPL / no asset cap), so holding GU out tested nothing but
+    # whether the model recognizes an unfamiliar state code. Guam's allotment, standard
+    # deduction, and shelter cap are its own (see data/thresholds/snap_fy2026.json), so
+    # the two must now bucket separately.
+    assert parameter_bucket("GU", fiscal_year=2026) != parameter_bucket("IL", fiscal_year=2026)
 
 
 def test_seen_pattern_holdout_is_labelled_seen_pattern(full_cases: list[TestCase]) -> None:
-    # GU shares (165, None) with IL, which stays in training.
+    # KS shares ("48_states_dc", "non_bbce") with MO/MS/SD/TN/UT, all of which stay
+    # in training, so holding KS out is a seen-jurisdiction/seen-pattern probe.
     s = split_cases(full_cases, holdout_states=HOLDOUT_JURISDICTIONS, dev_fraction=0.1, seed=7, fiscal_year=2026)
-    gu = [c for c in s.test if c.scenario.state == "GU"]
-    assert gu, "no GU cases reached the test partition"
-    assert {c.metadata["holdout_category"] for c in gu} == {"unseen_jurisdiction_seen_pattern"}
+    ks = [c for c in s.test if c.scenario.state == "KS"]
+    assert ks, "no KS cases reached the test partition"
+    assert {c.metadata["holdout_category"] for c in ks} == {"unseen_jurisdiction_seen_pattern"}
 
 
 def test_unseen_pattern_holdout_is_labelled_unseen_pattern(full_cases: list[TestCase]) -> None:
-    # VI is the only (175, None) jurisdiction, so holding it out empties the bucket.
+    # VI is the only ("virgin_islands", 175, None) jurisdiction, so holding it out
+    # empties the bucket.
     s = split_cases(full_cases, holdout_states=HOLDOUT_JURISDICTIONS, dev_fraction=0.1, seed=7, fiscal_year=2026)
     vi = [c for c in s.test if c.scenario.state == "VI"]
     assert vi
     assert {c.metadata["holdout_category"] for c in vi} == {"unseen_jurisdiction_unseen_pattern"}
 
 
+def test_gu_becomes_unseen_pattern_once_region_is_part_of_the_bucket(full_cases: list[TestCase]) -> None:
+    # Before region was part of the bucket, GU shared (165, None) with IL and was
+    # labelled unseen_jurisdiction_seen_pattern -- understating it, since GU's own
+    # allotment/deduction/shelter-cap numbers were never actually seen in training.
+    # With region in the bucket, ("guam", 165, None) is unique, so GU must be
+    # unseen_jurisdiction_unseen_pattern even though IL stays in training.
+    s = split_cases(full_cases, holdout_states=HOLDOUT_JURISDICTIONS, dev_fraction=0.1, seed=7, fiscal_year=2026)
+    gu = [c for c in s.test if c.scenario.state == "GU"]
+    assert gu, "no GU cases reached the test partition"
+    assert {c.metadata["holdout_category"] for c in gu} == {"unseen_jurisdiction_unseen_pattern"}
+
+
 def test_category_is_derived_from_train_not_hardcoded(full_cases: list[TestCase]) -> None:
-    # Hold out IL as well as GU: (165, None) is now empty in training, so GU must
-    # flip from seen-pattern to unseen-pattern without anyone editing a list.
+    # Hold out IN as well as ID: ("48_states_dc", 130, 5000) is now empty in
+    # training (ID was its only other holdout member; IN was its only trained
+    # member), so ID must flip from seen-pattern to unseen-pattern without anyone
+    # editing a list.
     s = split_cases(
         full_cases,
-        holdout_states=HOLDOUT_JURISDICTIONS | {"IL"},
+        holdout_states=HOLDOUT_JURISDICTIONS | {"IN"},
         dev_fraction=0.1,
         seed=7,
         fiscal_year=2026,
     )
-    gu = [c for c in s.test if c.scenario.state == "GU"]
-    assert {c.metadata["holdout_category"] for c in gu} == {"unseen_jurisdiction_unseen_pattern"}
+    idaho = [c for c in s.test if c.scenario.state == "ID"]
+    assert {c.metadata["holdout_category"] for c in idaho} == {"unseen_jurisdiction_unseen_pattern"}
 
 
 def test_seen_jurisdictions_also_reach_test_as_in_distribution(full_cases: list[TestCase]) -> None:

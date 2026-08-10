@@ -46,8 +46,10 @@ def get_standard_deduction(household_size: int, region: str = "48_states_dc") ->
         "48_states_dc": {1: 209, 2: 209, 3: 209, 4: 223, 5: 261},
         "alaska": {1: 358, 2: 358, 3: 358, 4: 358, 5: 358},
         "hawaii": {1: 295, 2: 295, 3: 295, 4: 295, 5: 300},
+        "guam": {1: 420, 2: 420, 3: 420, 4: 445, 5: 522},
+        "virgin_islands": {1: 184, 2: 184, 3: 185, 4: 223, 5: 261},
     }
-    six_plus = {"48_states_dc": 299, "alaska": 374, "hawaii": 344}
+    six_plus = {"48_states_dc": 299, "alaska": 374, "hawaii": 344, "guam": 598, "virgin_islands": 299}
     t = tables.get(region, tables["48_states_dc"])
     if household_size >= 6:
         return float(six_plus.get(region, 299))
@@ -59,6 +61,10 @@ def _region_for_state(state: str) -> str:
         return "alaska"
     if state == "HI":
         return "hawaii"
+    if state == "GU":
+        return "guam"
+    if state == "VI":
+        return "virgin_islands"
     return "48_states_dc"
 
 
@@ -107,6 +113,14 @@ class SNAPSource(DataSource):
         shelter_key = f"excess_shelter_deduction_cap_{self._region}"
         shelter_cap = float(raw.get(shelter_key, raw.get("excess_shelter_deduction_cap_48_states_dc", 744)))
 
+        # Minimum benefit resolves by region, same as the shelter cap above. Alaska has
+        # three allotment tiers (Urban/Rural 1/Rural 2); this kit models a single Alaska
+        # region and already defaults its *max* allotment to the Urban tier (see
+        # `max_benefit_urban` fallback above), so `minimum_benefit_alaska` is the Urban
+        # figure too, for consistency with that existing default rather than a new choice.
+        minimum_benefit_key = f"minimum_benefit_{self._region}"
+        minimum_benefit = float(raw.get(minimum_benefit_key, raw.get("minimum_benefit_48_states_dc", 24)))
+
         return ProgramThresholds(
             program="snap",
             fiscal_year=raw["_metadata"]["fiscal_year"],
@@ -121,7 +135,7 @@ class SNAPSource(DataSource):
             extra={
                 "excess_shelter_cap": shelter_cap,
                 "homeless_shelter_deduction": float(raw["homeless_shelter_deduction"]),
-                "minimum_benefit": float(raw.get("minimum_benefit_48_states_dc", 24)),
+                "minimum_benefit": minimum_benefit,
                 "cfr_reference": raw["_metadata"]["cfr_reference"],
                 "region": self._region,
                 "verification_status": raw["_metadata"]["verification_status"],
