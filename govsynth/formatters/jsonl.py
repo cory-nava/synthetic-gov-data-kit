@@ -29,7 +29,14 @@ ANSWER_BLOCK_RE = re.compile(r"```json\s*\n(.*?)\n\s*```", re.DOTALL)
 
 
 class JSONLFormatter:
-    """Serializes TestCase objects to JSONL (instruction fine-tuning format)."""
+    """Serializes TestCase objects to JSONL (instruction fine-tuning format).
+
+    `include_answer_block=True` is currently SNAP-only: `_benefit_for` reads
+    `scenario.additional_context["monthly_allotment"]`, a key only the SNAP
+    eligibility generator populates. Formatting an eligible case from another
+    program (e.g. WIC) with the flag on raises `ValueError` rather than silently
+    emitting a wrong or fabricated number.
+    """
 
     def __init__(
         self,

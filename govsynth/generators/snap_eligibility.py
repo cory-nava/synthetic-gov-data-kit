@@ -304,7 +304,7 @@ class SNAPEligibilityGenerator(Generator):
                 additional_context={
                     "is_homeless": True,
                     "threshold_type": "homeless_shelter_deduction",
-                    "monthly_allotment": (limits.max_benefit or 0.0) if is_eligible else None,
+                    "monthly_allotment": self._estimate_benefit(hh_size, net_income) if is_eligible else None,
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -558,7 +558,7 @@ class SNAPEligibilityGenerator(Generator):
                     "board_cost": board_cost,
                     "boarder_income": board_profit,
                     "threshold_type": "boarder_income_proration",
-                    "monthly_allotment": (limits.max_benefit or 0.0) if is_eligible else None,
+                    "monthly_allotment": self._estimate_benefit(hh_size, net_income) if is_eligible else None,
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -688,7 +688,7 @@ class SNAPEligibilityGenerator(Generator):
                     "seasonal_total": seasonal_total,
                     "work_months": work_months,
                     "threshold_type": "migrant_income_averaging",
-                    "monthly_allotment": (limits.max_benefit or 0.0) if is_eligible else None,
+                    "monthly_allotment": self._estimate_benefit(hh_size, net_income) if is_eligible else None,
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -843,7 +843,17 @@ class SNAPEligibilityGenerator(Generator):
                     "ineligible_member_count": ineligible_count,
                     "eligible_member_count": eligible_count,
                     "threshold_type": "mixed_immigration_status_hh_size_reduction",
-                    "monthly_allotment": (limits_reduced.max_benefit or 0.0) if is_eligible else None,
+                    # Benefit-issuance unit size: only the eligible members receive an
+                    # allotment, so `eligible_count` (already the basis for the gross/net
+                    # limit lookups above) is used here too, via the same drop-in helper
+                    # used everywhere else (default is_categorically_eligible=True).
+                    # FLAGGED, NOT RESOLVED (see the Task 1 fix report): whether the
+                    # 1-2-person minimum-benefit floor should apply here at all -- and
+                    # whether `eligible_count` is the right basis for it -- under 7 CFR
+                    # 273.11(c)(2)/273.4(c)(3) for a size-reduced, non-categorically-linked
+                    # household is a real policy question this task does not resolve with
+                    # confidence. Left as the plain drop-in rather than forcing a guess.
+                    "monthly_allotment": (self._estimate_benefit(eligible_count, net_income) if is_eligible else None),
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -898,6 +908,18 @@ class SNAPEligibilityGenerator(Generator):
         gross = round(limits.gross_monthly * rng.uniform(1.10, 1.40), 2)
         unearned = round(rng.uniform(200, 600), -1)  # SSI/TANF benefit
 
+        # Categorical eligibility skips the *income test*, but the benefit amount
+        # still depends on net income (7 CFR 273.10(e)) -- this case never computed
+        # one before, so `estimate_monthly_benefit` had nothing to work from. Total
+        # countable income is wages (earned) plus the TANF/SSI payment (unearned);
+        # only the earned portion gets the 20% earned-income deduction.
+        net_income = self.source.calculate_net_income(
+            gross_income=gross + unearned,
+            household_size=hh_size,
+            earned_income=gross,
+            has_elderly_or_disabled=True,
+        )
+
         uid = build_short_uid(rng)
         case_id = f"snap.{self.state.lower()}.eligibility.categorical_eligibility_tanf_ssi.eligible.hh{hh_size}.{uid}"
 
@@ -949,6 +971,7 @@ class SNAPEligibilityGenerator(Generator):
                 ),
                 household_size=hh_size,
                 monthly_gross_income=gross,
+                monthly_net_income=round(net_income, 2),
                 liquid_assets=round(rng.uniform(0, 2000), -2),
                 state=self.state,
                 has_elderly_or_disabled=True,
@@ -957,7 +980,9 @@ class SNAPEligibilityGenerator(Generator):
                     "unearned_income": unearned,
                     "threshold_type": "categorical_eligibility_tanf_ssi",
                     # This case type is always eligible (see expected_outcome below).
-                    "monthly_allotment": limits.max_benefit or 0.0,
+                    # Categorically eligible via TANF/SSI, so the minimum-benefit
+                    # floor for 1-2 person households correctly applies here.
+                    "monthly_allotment": self._estimate_benefit(hh_size, net_income),
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -1195,7 +1220,12 @@ class SNAPEligibilityGenerator(Generator):
                     "bbce_gross_limit": bbce_limit,
                     "dependent_care": dependent_care,
                     "threshold_type": "bbce_expanded_gross_limit",
-                    "monthly_allotment": (limits.max_benefit or 0.0) if is_eligible else None,
+                    # BBCE-eligible households are categorically eligible by definition
+                    # (7 CFR 273.2(j)(2)(ii) -- that is what BBCE confers), so the
+                    # minimum-benefit floor for 1-2 person households correctly applies.
+                    "monthly_allotment": (
+                        self._estimate_benefit(hh_size, net_income, source=src) if is_eligible else None
+                    ),
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -1269,6 +1299,35 @@ class SNAPEligibilityGenerator(Generator):
             seed=seed,
         )
 
+    def _estimate_benefit(
+        self,
+        household_size: int,
+        net_income: float,
+        *,
+        source: SNAPBBCESource | None = None,
+        is_categorically_eligible: bool = True,
+    ) -> float:
+        """Single site for the monthly SNAP allotment estimate across every builder.
+
+        Delegates to ``SNAPBBCESource.estimate_monthly_benefit`` (7 CFR 273.10(e):
+        max allotment minus 30% of net income, with the 1-2-person minimum-benefit
+        floor) rather than reimplementing the formula. The bug this method fixes
+        was exactly a one-line reimplementation (``limits.max_benefit or 0.0`` --
+        the *maximum* allotment for the household size, ignoring net income
+        entirely) copy-pasted into eight call sites; routing all of them through
+        one method makes a future formula change (or fix) land everywhere at once.
+
+        `source` defaults to `self.bbce_source` (this generator's own state) but
+        can be overridden -- `_build_bbce_expanded_income_case` sometimes builds
+        its case against a different state's `SNAPBBCESource` (see
+        `_bbce_source_for_case`), and the allotment must come from that same
+        state's table, not the generator's default one.
+        """
+        src = source or self.bbce_source
+        return src.estimate_monthly_benefit(
+            household_size, net_income, is_categorically_eligible=is_categorically_eligible
+        )
+
     def _build_case(self, profile: USHouseholdProfile, seed: int | None, index: int) -> TestCase:
         """Build a complete TestCase from a profile."""
         t = self.bbce_source.thresholds()
@@ -1296,8 +1355,15 @@ class SNAPEligibilityGenerator(Generator):
             has_elderly_or_disabled=profile.has_elderly_or_disabled,
         )
 
+        # Estimate the monthly allotment once, via the single shared helper (7 CFR
+        # 273.10(e): max allotment minus 30% of net income, not the max allotment
+        # alone) -- and feed that same number into the rationale trace, the
+        # expected-answer prose, and scenario.additional_context below, so all
+        # three agree.
+        benefit = self._estimate_benefit(profile.household_size, net_income) if is_eligible else 0.0
+
         # Build rationale trace
-        trace = self._build_rationale_trace(profile, net_income, limits, is_eligible, fy_config)
+        trace = self._build_rationale_trace(profile, net_income, limits, is_eligible, fy_config, benefit)
 
         # Determine difficulty
         difficulty = self._classify_difficulty(profile, is_eligible)
@@ -1309,19 +1375,20 @@ class SNAPEligibilityGenerator(Generator):
         scenario_summary = profile.natural_language_summary("snap")
 
         # Build expected answer
-        expected_answer = self._build_expected_answer(profile, net_income, limits, is_eligible, reason, fy_config)
+        expected_answer = self._build_expected_answer(
+            profile, net_income, limits, is_eligible, reason, fy_config, benefit
+        )
 
         # Persist the computed monthly allotment so downstream consumers (e.g. the
         # JSONL formatter's machine-checkable answer block) can read the value the
-        # generator already computed instead of recomputing it. `limits.max_benefit`
-        # is the exact same verified table value used in the rationale/expected-answer
-        # text above (same `limits` object), so this cannot drift from what the case
-        # already states.
+        # generator already computed instead of recomputing it. This is the exact
+        # same `benefit` value used in the rationale/expected-answer text above, so
+        # it cannot drift from what the case already states.
         scenario_fields = profile.to_scenario_fields()
         if is_eligible:
             scenario_fields["additional_context"] = {
                 **scenario_fields["additional_context"],
-                "monthly_allotment": limits.max_benefit or 0.0,
+                "monthly_allotment": benefit,
             }
 
         return TestCase(
@@ -1332,7 +1399,7 @@ class SNAPEligibilityGenerator(Generator):
             difficulty=difficulty,
             scenario=ScenarioBlock(
                 summary=scenario_summary,
-                **{k: v for k, v in scenario_fields.items()},
+                **scenario_fields,
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
             expected_outcome="eligible" if is_eligible else "ineligible",
@@ -1359,6 +1426,7 @@ class SNAPEligibilityGenerator(Generator):
         limits: HouseholdThreshold,
         is_eligible: bool,
         fy_config: FiscalYearConfig,
+        benefit: float = 0.0,
     ) -> RationaleTrace:
         """Construct the step-by-step reasoning chain for SNAP eligibility."""
         steps: list[ReasoningStep] = []
@@ -1569,8 +1637,10 @@ class SNAPEligibilityGenerator(Generator):
                     ],
                 )
 
-        # All tests passed
-        benefit = limits.max_benefit or 0.0
+        # All tests passed. `benefit` is passed in by the caller (_build_case),
+        # computed once via the shared _estimate_benefit helper so this text
+        # agrees with scenario.additional_context["monthly_allotment"] and the
+        # JSONL formatter's answer block.
         gross_note = (
             "gross income (waived for elderly/disabled), " if profile.has_elderly_or_disabled else "gross income, "
         )
@@ -1611,6 +1681,7 @@ class SNAPEligibilityGenerator(Generator):
         is_eligible: bool,
         reason: str,
         fy_config: FiscalYearConfig,
+        benefit: float = 0.0,
     ) -> str:
         t = self.bbce_source.thresholds()
         std_ded = get_standard_deduction(profile.household_size)
@@ -1620,7 +1691,12 @@ class SNAPEligibilityGenerator(Generator):
         gross_limit = self.bbce_source.effective_gross_limit(profile.household_size)
 
         if is_eligible:
-            benefit = limits.max_benefit or 0.0
+            # `benefit` is passed in by the caller (_build_case), computed once via
+            # the shared _estimate_benefit helper -- the actual allotment (max
+            # allotment minus 30% of net income, per 7 CFR 273.10(e)), not the
+            # household-size maximum -- so this text agrees with
+            # scenario.additional_context["monthly_allotment"] and the JSONL
+            # formatter's answer block.
             asset_str = "N/A (BBCE — waived)" if t.asset_limit_general is None else f"${t.asset_limit_general:,.0f}"
             gross_result = (
                 "(waived — elderly/disabled household)"
@@ -1634,7 +1710,9 @@ class SNAPEligibilityGenerator(Generator):
                 f"${std_ded:,.0f} (standard deduction) = ${net_income:,.2f} ≤ ${limits.net_monthly:,.2f} — PASS.\n"
                 f"Assets: ${profile.liquid_assets:,.2f} ≤ {asset_str} — PASS.\n\n"
                 f"Estimated monthly benefit: approximately ${benefit:,.0f} "
-                f"(maximum for {profile.household_size}-person household, subject to net income calculation)."
+                f"(7 CFR 273.10(e): the {profile.household_size}-person maximum allotment "
+                f"minus 30% of net income, subject to the minimum-benefit floor for "
+                f"1-2 person households)."
             )
         else:
             asset_result = "N/A (BBCE waived)" if t.asset_limit_general is None else f"${t.asset_limit_general:,.2f}"
