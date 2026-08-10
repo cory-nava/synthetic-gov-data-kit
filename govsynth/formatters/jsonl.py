@@ -7,6 +7,7 @@ containing a messages array in OpenAI/Anthropic chat format.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,12 @@ _SYSTEM_PROMPT = (
     "federal fiscal year tables."
 )
 
+# Matches a fenced JSON block. Non-greedy so several blocks in one response
+# yield several matches rather than one span swallowing the text between them;
+# the scorer takes the last, which is the model's final answer after any
+# self-correction.
+ANSWER_BLOCK_RE = re.compile(r"```json\s*\n(.*?)\n\s*```", re.DOTALL)
+
 
 class JSONLFormatter:
     """Serializes TestCase objects to JSONL (instruction fine-tuning format)."""
@@ -28,9 +35,11 @@ class JSONLFormatter:
         self,
         include_rationale_in_answer: bool = True,
         system_prompt: str = _SYSTEM_PROMPT,
+        include_answer_block: bool = False,
     ) -> None:
         self.include_rationale = include_rationale_in_answer
         self.system_prompt = system_prompt
+        self.include_answer_block = include_answer_block
 
     def format_one(self, case: TestCase) -> dict[str, Any]:
         """Convert a TestCase to a fine-tuning message dict."""
@@ -38,6 +47,16 @@ class JSONLFormatter:
         if self.include_rationale:
             trace_text = case.rationale_trace.to_plain_text()
             assistant_content = f"{trace_text}\n\n{case.expected_answer}"
+
+        if self.include_answer_block:
+            benefit = self._benefit_for(case)
+            payload = {
+                "determination": case.expected_outcome,
+                "monthly_benefit": benefit,
+                "rules_cited": case.rationale_trace.cited_rules(),
+            }
+            block = json.dumps(payload, indent=2)
+            assistant_content = f"{assistant_content}\n\n```json\n{block}\n```"
 
         return {
             "case_id": case.case_id,
@@ -62,3 +81,21 @@ class JSONLFormatter:
         with open(path, "w", encoding="utf-8") as f:
             for case in cases:
                 f.write(json.dumps(self.format_one(case), ensure_ascii=False) + "\n")
+
+    @staticmethod
+    def _benefit_for(case: TestCase) -> float | None:
+        """Return the monthly allotment for an eligible case, else None.
+
+        The generator stores the computed allotment in scenario.additional_context
+        (key "monthly_allotment") for every eligible case; recomputing it here would
+        duplicate the rules engine and let the two drift.
+        """
+        if case.expected_outcome != "eligible":
+            return None
+        value = case.scenario.additional_context.get("monthly_allotment")
+        if value is None:
+            raise ValueError(
+                f"Case {case.case_id} is eligible but carries no monthly_allotment "
+                "in scenario.additional_context; the answer block cannot be built."
+            )
+        return float(value)

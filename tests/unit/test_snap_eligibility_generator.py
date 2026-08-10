@@ -70,3 +70,22 @@ def test_strict_asset_state_generates_cases() -> None:
     cases = gen.generate(n=10, seed=42)
     assert len(cases) == 10
     assert all(c.case_id.startswith("snap.tx.") for c in cases)
+
+
+def test_every_eligible_case_carries_monthly_allotment() -> None:
+    """Downstream consumers (e.g. the JSONL formatter's answer block) read the
+
+    computed monthly allotment from scenario.additional_context rather than
+    recomputing it. Every eligible case -- from every builder path, not just
+    the main threshold-boundary path -- must carry a non-null value there.
+    """
+    for state in ["VA", "CA", "TX"]:
+        gen = SNAPEligibilityGenerator(fiscal_year=2026, state=state)
+        for strategy in ["edge_saturated", "uniform", "realistic"]:
+            for seed in range(5):
+                cases = gen.generate(n=30, seed=seed, profile_strategy=strategy)
+                for case in cases:
+                    if case.expected_outcome == "eligible":
+                        allotment = case.scenario.additional_context.get("monthly_allotment")
+                        assert allotment is not None, f"{case.case_id} is eligible but missing monthly_allotment"
+                        assert allotment >= 0

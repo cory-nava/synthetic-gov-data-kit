@@ -304,6 +304,7 @@ class SNAPEligibilityGenerator(Generator):
                 additional_context={
                     "is_homeless": True,
                     "threshold_type": "homeless_shelter_deduction",
+                    "monthly_allotment": (limits.max_benefit or 0.0) if is_eligible else None,
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -557,6 +558,7 @@ class SNAPEligibilityGenerator(Generator):
                     "board_cost": board_cost,
                     "boarder_income": board_profit,
                     "threshold_type": "boarder_income_proration",
+                    "monthly_allotment": (limits.max_benefit or 0.0) if is_eligible else None,
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -686,6 +688,7 @@ class SNAPEligibilityGenerator(Generator):
                     "seasonal_total": seasonal_total,
                     "work_months": work_months,
                     "threshold_type": "migrant_income_averaging",
+                    "monthly_allotment": (limits.max_benefit or 0.0) if is_eligible else None,
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -840,6 +843,7 @@ class SNAPEligibilityGenerator(Generator):
                     "ineligible_member_count": ineligible_count,
                     "eligible_member_count": eligible_count,
                     "threshold_type": "mixed_immigration_status_hh_size_reduction",
+                    "monthly_allotment": (limits_reduced.max_benefit or 0.0) if is_eligible else None,
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -952,6 +956,8 @@ class SNAPEligibilityGenerator(Generator):
                     "tanf_or_ssi_recipient": True,
                     "unearned_income": unearned,
                     "threshold_type": "categorical_eligibility_tanf_ssi",
+                    # This case type is always eligible (see expected_outcome below).
+                    "monthly_allotment": limits.max_benefit or 0.0,
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -1025,7 +1031,8 @@ class SNAPEligibilityGenerator(Generator):
 
         federal_limit = src.federal_gross_limit(hh_size)
         bbce_limit = src.effective_gross_limit(hh_size)
-        net_limit = src.thresholds().by_household_size(hh_size).net_monthly
+        limits = src.thresholds().by_household_size(hh_size)
+        net_limit = limits.net_monthly
         pct = p.gross_income_limit_pct_fpl
 
         # ~70% eligible in-band cases, ~30% adversarial above-limit cases.
@@ -1188,6 +1195,7 @@ class SNAPEligibilityGenerator(Generator):
                     "bbce_gross_limit": bbce_limit,
                     "dependent_care": dependent_care,
                     "threshold_type": "bbce_expanded_gross_limit",
+                    "monthly_allotment": (limits.max_benefit or 0.0) if is_eligible else None,
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -1303,6 +1311,19 @@ class SNAPEligibilityGenerator(Generator):
         # Build expected answer
         expected_answer = self._build_expected_answer(profile, net_income, limits, is_eligible, reason, fy_config)
 
+        # Persist the computed monthly allotment so downstream consumers (e.g. the
+        # JSONL formatter's machine-checkable answer block) can read the value the
+        # generator already computed instead of recomputing it. `limits.max_benefit`
+        # is the exact same verified table value used in the rationale/expected-answer
+        # text above (same `limits` object), so this cannot drift from what the case
+        # already states.
+        scenario_fields = profile.to_scenario_fields()
+        if is_eligible:
+            scenario_fields["additional_context"] = {
+                **scenario_fields["additional_context"],
+                "monthly_allotment": limits.max_benefit or 0.0,
+            }
+
         return TestCase(
             case_id=case_id,
             program=Program.SNAP.value,
@@ -1311,7 +1332,7 @@ class SNAPEligibilityGenerator(Generator):
             difficulty=difficulty,
             scenario=ScenarioBlock(
                 summary=scenario_summary,
-                **{k: v for k, v in profile.to_scenario_fields().items()},
+                **{k: v for k, v in scenario_fields.items()},
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
             expected_outcome="eligible" if is_eligible else "ineligible",
