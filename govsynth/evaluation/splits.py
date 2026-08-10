@@ -94,6 +94,19 @@ def parameter_bucket(state: str, *, fiscal_year: int = DEFAULT_SNAP_FY) -> tuple
     parameters it has genuinely never seen. Keying on region as well makes
     that a real unseen-parameter probe instead of an unseen-jurisdiction one.
 
+    A side effect: because Alaska, Hawaii, Guam, and the Virgin Islands are
+    each the only jurisdiction in their own region, their buckets are
+    permanently singletons -- no future trained jurisdiction can ever share
+    one, since region alone already separates them from every 48-states
+    jurisdiction. Under `HOLDOUT_JURISDICTIONS`, GU and VI both end up labelled
+    `unseen_jurisdiction_unseen_pattern`, but they are not equally novel: GU's
+    BBCE combination (165% FPL, asset test waived) *is* present in training
+    via IL, so only GU's benefit-side tables (allotment, standard deduction,
+    shelter cap, minimum benefit) are genuinely unseen, whereas VI's 175% FPL
+    gross limit has no trained analog at all -- VI is unseen on both the BBCE
+    axis and the region axis. A model card that averages "unseen_pattern"
+    performance across the two is averaging two different probe strengths.
+
     Raises ValueError for a jurisdiction the FY table does not cover --
     notably PR, which runs the Nutrition Assistance Program (a block grant)
     rather than SNAP, and must never enter either partition.
@@ -115,7 +128,8 @@ def parameter_bucket(state: str, *, fiscal_year: int = DEFAULT_SNAP_FY) -> tuple
             "Program, not SNAP, and must not appear in either partition."
         )
     extra = source.thresholds().extra
-    region = extra["region"] if extra else "48_states_dc"
+    assert extra is not None, "SNAP thresholds always populate `extra`"
+    region = extra["region"]
     if not params.bbce:
         return (region, "non_bbce")
     return (region, params.gross_income_limit_pct_fpl, params.asset_limit)

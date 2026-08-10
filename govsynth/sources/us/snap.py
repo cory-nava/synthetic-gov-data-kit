@@ -41,6 +41,16 @@ def get_standard_deduction(household_size: int, region: str = "48_states_dc") ->
     """Return the FY2026 standard deduction for a given household size and region.
 
     Source: USDA FNS SNAP COLA FY2026 Memo, p.6.
+
+    Raises ValueError for a region not in `tables` and KeyError for a household
+    size the region's table has no entry for. This function used to silently
+    fall back to the 48-states-and-DC table for any unrecognized region (via
+    `tables.get(region, tables["48_states_dc"])`) and to 209 for any unrecognized
+    size (via `t.get(..., 209)`) -- exactly the failure mode that, before this
+    fiscal year's data was added, made Guam and the U.S. Virgin Islands
+    silently receive the wrong standard deduction with no test able to catch
+    it. If a future region is added to `_region_for_state` without a matching
+    entry here, it must fail loudly instead of quietly regressing the same way.
     """
     tables = {
         "48_states_dc": {1: 209, 2: 209, 3: 209, 4: 223, 5: 261},
@@ -50,10 +60,15 @@ def get_standard_deduction(household_size: int, region: str = "48_states_dc") ->
         "virgin_islands": {1: 184, 2: 184, 3: 185, 4: 223, 5: 261},
     }
     six_plus = {"48_states_dc": 299, "alaska": 374, "hawaii": 344, "guam": 598, "virgin_islands": 299}
-    t = tables.get(region, tables["48_states_dc"])
+    if region not in tables:
+        raise ValueError(f"get_standard_deduction: unrecognized region {region!r}; known regions: {sorted(tables)}")
     if household_size >= 6:
-        return float(six_plus.get(region, 299))
-    return float(t.get(min(household_size, 5), 209))
+        return float(six_plus[region])
+    key = min(household_size, 5)
+    t = tables[region]
+    if key not in t:
+        raise KeyError(f"get_standard_deduction: region {region!r} has no entry for household size {key}")
+    return float(t[key])
 
 
 def _region_for_state(state: str) -> str:

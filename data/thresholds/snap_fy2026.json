@@ -8,6 +8,9 @@
     "fpl_basis_year": 2025,
     "source": "USDA FNS SNAP FY2026 Cost-of-Living Adjustments Memo (August 13, 2025)",
     "source_url": "https://www.fns.usda.gov/snap/allotment/cola/fy26",
+    "source_url_max_allotments_pdf": "https://fns-prod.azureedge.us/sites/default/files/resource-files/snap-fy26maximumAllotments-deductions.pdf",
+    "source_url_full_memo_state_mirror": "https://health.alaska.gov/media/4nunu3ob/fy2026-cola-memo.pdf",
+    "source_url_full_memo_state_mirror_note": "State-agency-hosted mirror of the signed 7-page USDA FNS memo (income standards on p.3); the usda.gov original returns 403 to automated fetches.",
     "cfr_reference": "7 CFR 273.9",
     "verification_status": "verified",
     "verification_note": "Values taken directly from official USDA FNS SNAP COLA FY2026 memo signed by Ronald Ward, Acting Associate Administrator, dated August 13, 2025. Effective October 1, 2025 through September 30, 2026."
