@@ -1,6 +1,6 @@
 """Train / dev / test partitioning for fine-tuning experiments.
 
-Two independent guards against leakage:
+Three independent guards, none of which trust the others:
 
 1. Whole-jurisdiction holdout. Every case from a holdout jurisdiction goes to
    `test` and is removed from consideration for `train` and `dev`.
@@ -8,6 +8,16 @@ Two independent guards against leakage:
 2. Disjoint case_ids. Enforced by construction -- each case is assigned to
    exactly one partition -- and asserted before returning, because "by
    construction" is what every leaked benchmark also claimed.
+
+3. Every jurisdiction present in `cases` is validated against the FY BBCE
+   table up front, before any partitioning happens -- not only the
+   jurisdictions that happen to land in `train` or `test`. Categorization
+   only ever looks at `train` and `test`, so without this a jurisdiction that
+   isn't in the table (e.g. PR) could land entirely in `dev` at some seeds and
+   pass silently, while landing in `train` at other seeds and raising. A
+   safety check that only fires at some seeds is worse than one that never
+   fires: it is green in CI and silent in a production run that happens to
+   shuffle differently.
 
 Holding a jurisdiction out is not by itself an interesting test: if some other
 jurisdiction in training shares its exact BBCE parameter combination, the model
@@ -99,16 +109,30 @@ def split_cases(
 ) -> Split:
     """Partition `cases` into train / dev / test, honoring a whole-jurisdiction holdout.
 
-    Every case from a `holdout_states` jurisdiction goes to `test` and never to
-    `train` or `dev`. The remaining cases are sorted by `case_id` (so ordering
-    is a pure function of content, not of generation order) and shuffled with
-    `seed`, then split: `dev_fraction` of the remainder becomes `dev`, another
-    `dev_fraction` becomes an in-distribution slice of `test` (otherwise `test`
-    would only measure cross-jurisdiction transfer and there would be no
-    in-distribution number to compare it against), and what's left is `train`.
+    `cases` is sorted by `case_id` up front (so every downstream partition is a
+    pure function of content, not of caller-supplied order -- see
+    test_split_is_independent_of_input_order), then every case from a
+    `holdout_states` jurisdiction goes to `test` and never to `train` or
+    `dev`. The remainder is shuffled with `seed`, then split: `dev_fraction`
+    of it becomes `dev`, another `dev_fraction` becomes an in-distribution
+    slice of `test` (otherwise `test` would only measure cross-jurisdiction
+    transfer and there would be no in-distribution number to compare it
+    against), and what's left is `train`.
 
-    Raises ValueError if a holdout state is not present in `cases`, or if
-    `dev_fraction` is outside [0, 1).
+    Raises ValueError if a holdout state is not present in `cases`, if
+    `dev_fraction` is outside [0, 1), or if any jurisdiction present in
+    `cases` -- in *any* partition, not only `test` -- is not in the FY table
+    (see parameter_bucket). That last check runs seed-independently over every
+    present jurisdiction before partitioning, specifically so that an
+    off-table jurisdiction (e.g. PR) landing in `dev` at some seeds and in
+    `train`/`test` at others can't produce a seed-dependent pass/fail.
+
+    Mutates `cases`: sets `case.metadata["holdout_category"]` on every case
+    that ends up in `test`, and clears that key (if present from an earlier
+    call) on every case in `train` or `dev`. Safe to call repeatedly on the
+    same list with different `holdout_states`/`seed` -- each call leaves
+    every case's label consistent with that call's own result, not a stale
+    label from a previous call.
     """
     holdout = {s.upper() for s in holdout_states}
     present = {c.scenario.state.upper() for c in cases}
@@ -118,13 +142,32 @@ def split_cases(
     if not 0.0 <= dev_fraction < 1.0:
         raise ValueError(f"dev_fraction must be in [0, 1), got {dev_fraction}")
 
-    test = [c for c in cases if c.scenario.state.upper() in holdout]
-    remainder = [c for c in cases if c.scenario.state.upper() not in holdout]
+    # Validate every jurisdiction actually present, up front, before any
+    # partitioning happens -- not just the ones that happen to land in `test`.
+    # Categorization below only ever calls parameter_bucket() on `train` and
+    # `test` states; without this pass, a not-in-the-table code (e.g. PR) that
+    # lands entirely in `dev` at a given seed would sail through with no
+    # error, because `dev` membership is never checked against the BBCE table.
+    # That is a seed-dependent hole: green in CI, silent in a production run
+    # that happens to shuffle differently. Doing this here makes the guard
+    # unconditional -- it fires the same way regardless of which partition an
+    # off-table jurisdiction's cases end up in.
+    for code in sorted(present):
+        parameter_bucket(code, fiscal_year=fiscal_year)
 
-    # Sort before shuffling: generator output order is not guaranteed stable
-    # across runs, and an unsorted input would make `seed` insufficient to
-    # reproduce the split.
-    remainder = sorted(remainder, key=lambda c: c.case_id)
+    # Sort once, up front, before splitting into the holdout slice and the
+    # remainder: generator output order is not guaranteed stable across runs,
+    # and filtering an unsorted `cases` would make the holdout slice of
+    # `test` order-dependent even though only `remainder` gets an explicit
+    # shuffle below -- a list comprehension over `cases` preserves whatever
+    # order `cases` arrived in. Sorting first means every downstream list
+    # (the holdout slice and the shuffled remainder) is a pure function of
+    # content, not of caller-supplied order. See
+    # test_split_is_independent_of_input_order.
+    cases_sorted = sorted(cases, key=lambda c: c.case_id)
+    test = [c for c in cases_sorted if c.scenario.state.upper() in holdout]
+    remainder = [c for c in cases_sorted if c.scenario.state.upper() not in holdout]
+
     rng = random.Random(seed)
     rng.shuffle(remainder)
 
@@ -139,8 +182,20 @@ def split_cases(
     # Categorize AFTER the split is final: the label depends on which buckets
     # actually survived into train, not on which jurisdictions we intended to
     # hold out. This is what keeps the labels honest if the holdout set changes.
+    #
+    # NOTE ON MUTATION: `cases` may be reused across multiple split_cases()
+    # calls (e.g. a seed sweep, or comparing holdout sets). Every case in
+    # `train` and `dev` has any pre-existing `holdout_category` cleared here,
+    # so a case that was labelled `in_distribution` by a call with one holdout
+    # set and now lands in train/dev under a different holdout set does not
+    # keep carrying that stale label. Only `test` cases carry the key; absence
+    # of the key is itself meaningful (this case is not part of `test`).
     trained_states = {c.scenario.state.upper() for c in train}
     trained_buckets = {parameter_bucket(code, fiscal_year=fiscal_year) for code in trained_states}
+    for case in train:
+        case.metadata.pop("holdout_category", None)
+    for case in dev:
+        case.metadata.pop("holdout_category", None)
     for case in test:
         code = case.scenario.state.upper()
         if code in trained_states:
@@ -151,6 +206,16 @@ def split_cases(
             category = "unseen_jurisdiction_unseen_pattern"
         case.metadata["holdout_category"] = category
 
+    # Non-holdout jurisdictions that nonetheless have no case in `train` (e.g.
+    # an unlucky sample at a small n). `code in trained_states` doesn't
+    # distinguish these from a deliberate holdout, so any test case from one
+    # is labelled `unseen_jurisdiction_*` and would silently inflate the
+    # generalization denominator. Recorded here so that's visible rather than
+    # invisible; the current fixtures never trigger this (verified across
+    # several seeds at n=8), but a smaller n in the future could.
+    non_holdout_present = present - holdout
+    states_absent_from_train = sorted(non_holdout_present - trained_states)
+
     manifest = {
         "counts": {"train": len(train), "dev": len(dev), "test": len(test)},
         "holdout_states": sorted(holdout),
@@ -158,8 +223,9 @@ def split_cases(
         "seed": seed,
         "fiscal_year": fiscal_year,
         "trained_buckets": sorted(str(b) for b in trained_buckets),
+        "states_absent_from_train": states_absent_from_train,
         "test_by_category": dict(Counter(c.metadata["holdout_category"] for c in test)),
-        "test_by_jurisdiction": dict(Counter(c.scenario.state for c in test)),
+        "test_by_jurisdiction": dict(Counter(c.scenario.state.upper() for c in test)),
         "case_ids": {
             "train": sorted(c.case_id for c in train),
             "dev": sorted(c.case_id for c in dev),
