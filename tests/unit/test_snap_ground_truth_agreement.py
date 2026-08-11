@@ -129,6 +129,27 @@ def case_type(case: TestCase) -> str:
     return (case.scenario.additional_context or {}).get("threshold_type", "unknown")
 
 
+def is_gross_test_waived(case: TestCase) -> bool:
+    """Whether 7 CFR 273.9(a)(1) actually waives this case's gross income test.
+
+    `scenario.has_elderly_or_disabled` alone is too wide a carve-out: SSI/TANF
+    recipients are elderly-or-disabled by construction too --
+    `_build_categorical_eligibility_case` hardcodes `has_elderly_or_disabled=True`
+    because SSI recipients are elderly or disabled -- but that case's gross test
+    is SKIPPED by categorical eligibility (7 CFR 273.2(j)(2)), not WAIVED under
+    273.9(a)(1), and it still states a `gross_limit` in its step 2 inputs.
+    Keying the carve-out on the scenario flag alone meant that if that builder
+    ever stopped stating its limit, the wide predicate would wave the case
+    through as if it were gross-test-waived, with nothing else in this module
+    positioned to notice. Require the case type that IS the waiver
+    (`asset_limit_elderly_disabled`), or a step whose result actually renders
+    "WAIVED" -- every legitimate waived case renders one.
+    """
+    if case_type(case) == "asset_limit_elderly_disabled":
+        return True
+    return any(step.result == "WAIVED" for step in case.rationale_trace.steps)
+
+
 # ----------------------------------------------------------------------
 # The stated gross limit must be the governing one
 # ----------------------------------------------------------------------
@@ -387,7 +408,11 @@ def test_only_gross_test_waived_cases_may_state_no_gross_limit(state: str) -> No
     silently left the BBCE source. The only legitimate reason to state no gross
     limit is that the gross income test does not apply: 7 CFR 273.9(a)(1) waives
     it for a household with an elderly or disabled member, and those cases render
-    a "WAIVED" step with no limit in it.
+    a "WAIVED" step with no limit in it. Note that "elderly or disabled" is NOT,
+    by itself, the admissible-exemption set: `categorical_eligibility_tanf_ssi`
+    cases are elderly-or-disabled too (SSI recipients qualify) but are exempted
+    from the income test by categorical eligibility, not by the 273.9(a)(1)
+    waiver, and they still state a `gross_limit` -- see `is_gross_test_waived`.
 
     Those cases only arise in a jurisdiction that keeps a dollar asset cap:
     `_sample_edge_profile` drops both asset thresholds where the BBCE asset test is
@@ -405,7 +430,7 @@ def test_only_gross_test_waived_cases_may_state_no_gross_limit(state: str) -> No
             key in (step.inputs or {}) for step in case.rationale_trace.steps for key, _basis in _STATED_LIMIT_KEYS
         )
     ]
-    not_waived = [c.case_id for c in unchecked if not c.scenario.has_elderly_or_disabled]
+    not_waived = [c.case_id for c in unchecked if not is_gross_test_waived(c)]
     assert not not_waived, (
         f"{len(not_waived)} of {len(cases)} {state} cases state no gross limit anywhere in their "
         "rationale inputs and are not gross-test-waived, so nothing checks which limit they "
