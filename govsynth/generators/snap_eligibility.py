@@ -482,7 +482,15 @@ class SNAPEligibilityGenerator(Generator):
                         "single_parent_under6",
                         "tanf",
                         "work_study",
-                    ]
+                    ],
+                    # The limit this step's note quotes, stated structurally so the
+                    # agreement gate can check it against the jurisdiction's own source.
+                    # This case is exempt from the OUTCOME equality (a non-financial
+                    # denial under 7 CFR 273.5(a)), which is exactly why the limit it
+                    # quotes needs its own check: a limit drifting to the federal table
+                    # here changes no outcome and shows up only in the prose.
+                    "gross_income": gross,
+                    "gross_limit": gross_limit,
                 },
                 computation=(
                     "Exceptions checked: (1) Working 20+ hours/week — NO. "
@@ -495,8 +503,8 @@ class SNAPEligibilityGenerator(Generator):
                 is_determinative=True,
                 note=(
                     f"Income test not reached. Note: gross income ${gross:,.2f} is below "
-                    f"the ${gross_limit:,.2f} limit, but income level is irrelevant — "
-                    "the student exclusion fires before the income test."
+                    f"the ${gross_limit:,.2f} limit ({self._gross_basis(hh_size)}), but income "
+                    "level is irrelevant — the student exclusion fires before the income test."
                 ),
             ),
         ]
@@ -625,7 +633,16 @@ class SNAPEligibilityGenerator(Generator):
                 step_number=2,
                 title="Calculate total countable gross income",
                 rule_applied="7 CFR 273.9(a)(1)",
-                inputs={"other_income": other_income, "board_profit": board_profit},
+                # `countable_income` and `gross_limit` are inputs, not just prose in
+                # `result`: this step's `is_determinative` is that comparison, and the
+                # ground-truth agreement gate reaches a stated limit only where the step
+                # states it structurally (tests/unit/test_snap_ground_truth_agreement.py).
+                inputs={
+                    "other_income": other_income,
+                    "board_profit": board_profit,
+                    "countable_income": countable_income,
+                    "gross_limit": gross_limit,
+                },
                 computation=(
                     f"${other_income:,.2f} (wages) + ${board_profit:,.2f} (board profit) = "
                     f"${countable_income:,.2f} total countable income"
