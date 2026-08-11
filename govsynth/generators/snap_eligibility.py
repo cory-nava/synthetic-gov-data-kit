@@ -17,7 +17,7 @@ from govsynth.models.test_case import ScenarioBlock, TaskBlock, TestCase
 from govsynth.profiles.us_household import USHouseholdProfile
 from govsynth.reasoning.rules_engine import build_short_uid
 from govsynth.sources.base import HouseholdThreshold
-from govsynth.sources.us.snap import SNAPSource, get_standard_deduction
+from govsynth.sources.us.snap import get_standard_deduction
 from govsynth.sources.us.snap_bbce import SNAPBBCESource
 
 # Threshold types used in edge-saturated generation
@@ -76,6 +76,14 @@ class SNAPEligibilityGenerator(Generator):
     ADVERSARIAL directly, since those cases exist because models tend to
     misapply that specific rule, not because of any threshold distance. For a
     typical 'edge_saturated' run, roughly 20% of output is ADVERSARIAL.
+
+    Six of those seven builders apply to every jurisdiction. The seventh,
+    _build_bbce_expanded_income_case, needs a gross-income band between the
+    federal 130% FPL limit and a HIGHER state limit, which a jurisdiction that
+    has not adopted BBCE (or adopted it at 130% FPL) does not have. Such a
+    jurisdiction generates the other six types instead -- see
+    `supports_bbce_expanded_income`. It never borrows another jurisdiction's
+    parameters to manufacture the case.
     """
 
     def __init__(
@@ -85,10 +93,26 @@ class SNAPEligibilityGenerator(Generator):
     ) -> None:
         self.fiscal_year = fiscal_year
         self.state = state.upper()
-        # Federal baseline, used by the special-population builders (which are framed
-        # around federal rules). The main threshold path and the BBCE builder use the
-        # BBCE-aware source so per-state gross/asset rules apply.
-        self.source = SNAPSource(fiscal_year=fiscal_year, state=state)
+        # ONE source for every builder, deliberately. `SNAPBBCESource` extends
+        # `SNAPSource`, so it serves the federal baseline too: for a jurisdiction
+        # that has not adopted BBCE its `effective_gross_limit` IS the federal 130%
+        # FPL limit and its asset cap IS the federal one, both resolved from the
+        # same versioned data table.
+        #
+        # There is deliberately no second, federal-only source on this generator
+        # any more. Six of the seven special-population builders used to decide
+        # eligibility from a plain `SNAPSource` while every consumer rendered the
+        # jurisdiction's *BBCE* parameters into the prompt, so in a raised-BBCE
+        # state the prompt said the 3-person gross limit was $4,442 and the ground
+        # truth said "INELIGIBLE: $2,901.30 > $2,888.00 (130% FPL)". A model that
+        # read the stated parameters and applied them correctly was scored WRONG,
+        # and a model fine-tuned on those records was scored right -- a scoring
+        # channel favouring the fine-tune, on exactly the case shapes an open-book
+        # eval exists to test. Measured on a 6,360-case FY2026 run: 74 cases whose
+        # outcome flipped outright and 248 whose stated gross-income step was
+        # wrong. `tests/unit/test_snap_ground_truth_agreement.py` now asserts the
+        # invariant that would have caught it: every generated case's
+        # `expected_outcome` must agree with `SNAPBBCESource.is_eligible`.
         self.bbce_source = SNAPBBCESource(fiscal_year=fiscal_year, state=state)
 
     @property
@@ -134,7 +158,11 @@ class SNAPEligibilityGenerator(Generator):
 
         # edge_saturated: two-phase split
         n_special = max(0, min(int(n * 0.20), n))
-        n_special = max(n_special, min(7, n))  # guarantee >= 1 per type if n >= 7
+        # Guarantee >= 1 per available type once n is at least that many. Keyed on
+        # the AVAILABLE builder count, not a hardcoded 7: a jurisdiction that
+        # cannot support the BBCE expanded-income case has six types, and a
+        # hardcoded floor would over-request one type for it.
+        n_special = max(n_special, min(len(self._available_special_population_builders()), n))
         n_edge = n - n_special
 
         special_cases = self._build_special_population_cases(n_special, rng)
@@ -175,13 +203,79 @@ class SNAPEligibilityGenerator(Generator):
             ("_build_bbce_expanded_income_case", self._build_bbce_expanded_income_case),
         ]
 
-    def _build_special_population_cases(self, n: int, rng: random.Random) -> list[TestCase]:
-        """Build n special-population edge cases, cycling through 7 types.
+    @property
+    def supports_bbce_expanded_income(self) -> bool:
+        """Whether this jurisdiction can support a BBCE expanded-gross-limit case.
 
-        When n < 7, cycles through first n types. When n >= 7, guarantees at least
-        one case per type.
+        That case's entire premise is a household whose gross income falls in the
+        band between the federal 130% FPL limit and a HIGHER state limit. A
+        jurisdiction that has not adopted BBCE, or has adopted it at 130% FPL, has
+        no such band and therefore no case to build.
+
+        This used to be papered over: `_bbce_source_for_case` silently swapped in
+        ``SNAPBBCESource(state="CA")`` for any such jurisdiction and then set
+        ``state = src.state``, rewriting `case_id`, `jurisdiction`, and
+        `scenario.state` to CA. Measured on a 53-jurisdiction FY2026 run, that
+        moved 636 cases: 14 jurisdictions ended up with zero
+        `bbce_expanded_gross_limit` cases and CA received 162 cases instead of
+        120. For a holdout experiment that is worse than missing data -- CA was a
+        *held-out* jurisdiction, so the transplant loaded the holdout tier with an
+        adversarial case type its trained tier-mates barely had, and the
+        tier-to-tier accuracy gap absorbed a case-mix difference that has nothing
+        to do with jurisdiction novelty. Skipping the type is honest; borrowing
+        another jurisdiction's parameters is not.
+        """
+        p = self.bbce_source.bbce_params
+        return p.bbce and p.gross_income_limit_pct_fpl > 130
+
+    def _available_special_population_builders(
+        self,
+    ) -> list[tuple[str, Callable[[random.Random], TestCase]]]:
+        """`_special_population_builders`, minus any this jurisdiction cannot honour.
+
+        Only `_build_bbce_expanded_income_case` is ever filtered out, and only for
+        a jurisdiction with no gross-income band above the federal limit (see
+        `supports_bbce_expanded_income`). `_special_population_builders` itself
+        stays the full canonical list so a rename is still caught by
+        `test_builder_names_match_their_callables`.
         """
         builders = self._special_population_builders()
+        if self.supports_bbce_expanded_income:
+            return builders
+        return [(name, fn) for name, fn in builders if name != "_build_bbce_expanded_income_case"]
+
+    def _gross_limit(self, household_size: int) -> float:
+        """The monthly gross income limit that actually governs in this jurisdiction.
+
+        Single site for "which gross limit is this case judged against," so no
+        builder can drift back to the federal table while a consumer renders the
+        state's raised BBCE limit into the prompt (see `__init__`). Equals the
+        federal 130% FPL limit for a jurisdiction that has not adopted BBCE.
+        """
+        return self.bbce_source.effective_gross_limit(household_size)
+
+    def _gross_basis(self, household_size: int) -> str:
+        """The FPL basis label for `_gross_limit`, for rationale/answer prose.
+
+        Paired with `_gross_limit` so a limit and the percentage it is described by
+        can never disagree. Rationale text used to hardcode "130% FPL" in the
+        homeless, migrant, mixed-immigration, and categorical builders, which
+        mislabelled the basis on every case in a raised-BBCE jurisdiction even
+        where the outcome itself did not change -- a wrong number in a training
+        target is still a wrong number.
+        """
+        p = self.bbce_source.bbce_params
+        if p.bbce:
+            return f"{p.gross_income_limit_pct_fpl}% FPL BBCE limit, {self.state}, {household_size}-person HH"
+        return f"130% FPL, {household_size}-person HH"
+
+    def _build_special_population_cases(self, n: int, rng: random.Random) -> list[TestCase]:
+        """Build n special-population edge cases, cycling through the available types.
+
+        When n is below the number of available types, cycles through the first n.
+        When n is at or above it, guarantees at least one case per available type.
+        """
+        builders = self._available_special_population_builders()
         cases: list[TestCase] = []
         for i in range(n):
             name, builder = builders[i % len(builders)]
@@ -194,16 +288,19 @@ class SNAPEligibilityGenerator(Generator):
 
     def _build_homeless_case(self, rng: random.Random) -> TestCase:
         """Build a homeless shelter deduction edge case (7 CFR 273.9(c)(6))."""
-        t = self.source.thresholds()
+        t = self.bbce_source.thresholds()
         assert t.extra is not None, "SNAP thresholds always populate `extra`"
-        fy_config = self.source.fy_config
+        fy_config = self.bbce_source.fy_config
         hh_size = rng.randint(1, 3)
         limits = t.by_household_size(hh_size)
+        gross_limit = self._gross_limit(hh_size)
 
-        # Income: randomly placed near the threshold so outcome varies
-        gross = round(rng.uniform(limits.gross_monthly * 0.60, limits.gross_monthly * 1.10), 2)
+        # Income: randomly placed near the GOVERNING threshold so outcome varies.
+        # Sampling against the federal limit in a raised-BBCE state would put every
+        # case comfortably under the state limit and the outcome would never vary.
+        gross = round(rng.uniform(gross_limit * 0.60, gross_limit * 1.10), 2)
 
-        net_income = self.source.calculate_net_income(
+        net_income = self.bbce_source.calculate_net_income(
             gross_income=gross,
             household_size=hh_size,
             earned_income=gross,
@@ -211,7 +308,7 @@ class SNAPEligibilityGenerator(Generator):
             is_homeless=True,
         )
 
-        is_eligible, reason = self.source.is_eligible(
+        is_eligible, reason = self.bbce_source.is_eligible(
             household_size=hh_size,
             gross_income=gross,
             net_income=net_income,
@@ -235,15 +332,15 @@ class SNAPEligibilityGenerator(Generator):
                 rule_applied="7 CFR 273.9(a)(1)",
                 inputs={
                     "gross_income": gross,
-                    "gross_limit": limits.gross_monthly,
+                    "gross_limit": gross_limit,
                     "household_size": hh_size,
                 },
                 computation=(
-                    f"${gross:,.2f} {'<=' if gross <= limits.gross_monthly else '>'} "
-                    f"${limits.gross_monthly:,.2f} (130% FPL, {hh_size}-person HH)"
+                    f"${gross:,.2f} {'<=' if gross <= gross_limit else '>'} "
+                    f"${gross_limit:,.2f} ({self._gross_basis(hh_size)})"
                 ),
-                result="PASS" if gross <= limits.gross_monthly else "FAIL",
-                is_determinative=gross > limits.gross_monthly,
+                result="PASS" if gross <= gross_limit else "FAIL",
+                is_determinative=gross > gross_limit,
             ),
             ReasoningStep(
                 step_number=2,
@@ -347,13 +444,16 @@ class SNAPEligibilityGenerator(Generator):
         Income is deliberately set BELOW the gross limit to demonstrate that
         the student exclusion fires regardless of income level.
         """
-        t = self.source.thresholds()
-        fy_config = self.source.fy_config
+        fy_config = self.bbce_source.fy_config
         hh_size = 1
-        limits = t.by_household_size(hh_size)
+        gross_limit = self._gross_limit(hh_size)
 
-        # Income well below the gross limit — student is still ineligible
-        gross = round(limits.gross_monthly * rng.uniform(0.40, 0.75), 2)
+        # Income well below the GOVERNING gross limit — student is still ineligible.
+        # The point of the case is that the exclusion fires before the income test,
+        # so the income must clear whichever limit actually applies here; sampling
+        # against the federal limit in a raised-BBCE state would still clear it, but
+        # the prose would then compare against a limit the prompt never states.
+        gross = round(gross_limit * rng.uniform(0.40, 0.75), 2)
 
         uid = build_short_uid(rng)
         case_id = f"snap.{self.state.lower()}.eligibility.student_exclusion.ineligible.hh{hh_size}.{uid}"
@@ -395,7 +495,7 @@ class SNAPEligibilityGenerator(Generator):
                 is_determinative=True,
                 note=(
                     f"Income test not reached. Note: gross income ${gross:,.2f} is below "
-                    f"the ${limits.gross_monthly:,.2f} limit, but income level is irrelevant — "
+                    f"the ${gross_limit:,.2f} limit, but income level is irrelevant — "
                     "the student exclusion fires before the income test."
                 ),
             ),
@@ -410,7 +510,7 @@ class SNAPEligibilityGenerator(Generator):
             scenario=ScenarioBlock(
                 summary=(
                     f"A college student enrolled half-time in {self.state} with ${gross:,.0f}/month "
-                    f"gross income (below the {hh_size}-person gross limit of ${limits.gross_monthly:,.0f}). "
+                    f"gross income (below the {hh_size}-person gross limit of ${gross_limit:,.0f}). "
                     f"The student works part-time but fewer than 20 hours/week, has no dependent children, "
                     f"does not receive TANF, and is not enrolled in work-study."
                 ),
@@ -431,7 +531,7 @@ class SNAPEligibilityGenerator(Generator):
             expected_answer=(
                 f"This household is INELIGIBLE for SNAP. "
                 f"Although the applicant's gross income of ${gross:,.2f} is below the "
-                f"${limits.gross_monthly:,.2f} gross income limit, the student exclusion under "
+                f"${gross_limit:,.2f} gross income limit, the student exclusion under "
                 f"7 CFR 273.5(a) applies. The applicant is enrolled at least half-time and does not "
                 f"meet any of the exceptions under 7 CFR 273.5(b). The income test is not reached."
             ),
@@ -466,10 +566,11 @@ class SNAPEligibilityGenerator(Generator):
 
     def _build_boarder_case(self, rng: random.Random) -> TestCase:
         """Build a boarder/lodger income proration case (7 CFR 273.1(b)(7))."""
-        t = self.source.thresholds()
-        fy_config = self.source.fy_config
+        t = self.bbce_source.thresholds()
+        fy_config = self.bbce_source.fy_config
         hh_size = rng.randint(1, 3)
         limits = t.by_household_size(hh_size)
+        gross_limit = self._gross_limit(hh_size)
 
         # Board payment received; only profit portion counts
         board_total = round(rng.uniform(600, 1200), -1)
@@ -477,20 +578,28 @@ class SNAPEligibilityGenerator(Generator):
         board_profit = round(board_total - board_cost, 2)
 
         # Other income (earned wages)
-        other_income = round(rng.uniform(200, limits.gross_monthly * 0.60), 2)
+        other_income = round(rng.uniform(200, gross_limit * 0.60), 2)
         countable_income = other_income + board_profit  # Only profit counts
 
-        net_income = self.source.calculate_net_income(
+        # Drawn ONCE and reused below. This used to be two separate rng draws --
+        # one passed to `is_eligible`, a different one written into the scenario
+        # the prompt describes -- so the asset figure the determination was made
+        # from was not the asset figure the reader is shown. Benign only while both
+        # draws sit under the applicable cap; a BBCE asset cap can be low enough
+        # for two draws from this range to straddle it.
+        liquid_assets = round(rng.uniform(0, 1000), -2)
+
+        net_income = self.bbce_source.calculate_net_income(
             gross_income=countable_income,
             household_size=hh_size,
             earned_income=other_income,  # Board profit is unearned
         )
 
-        is_eligible, reason = self.source.is_eligible(
+        is_eligible, reason = self.bbce_source.is_eligible(
             household_size=hh_size,
             gross_income=countable_income,
             net_income=net_income,
-            liquid_assets=round(rng.uniform(0, 1000), -2),
+            liquid_assets=liquid_assets,
         )
 
         uid = build_short_uid(rng)
@@ -521,8 +630,11 @@ class SNAPEligibilityGenerator(Generator):
                     f"${other_income:,.2f} (wages) + ${board_profit:,.2f} (board profit) = "
                     f"${countable_income:,.2f} total countable income"
                 ),
-                result=f"Total gross income: ${countable_income:,.2f} vs limit ${limits.gross_monthly:,.2f}",
-                is_determinative=countable_income > limits.gross_monthly,
+                result=(
+                    f"Total gross income: ${countable_income:,.2f} vs limit "
+                    f"${gross_limit:,.2f} ({self._gross_basis(hh_size)})"
+                ),
+                is_determinative=countable_income > gross_limit,
             ),
             ReasoningStep(
                 step_number=3,
@@ -550,7 +662,7 @@ class SNAPEligibilityGenerator(Generator):
                 household_size=hh_size,
                 monthly_gross_income=countable_income,
                 monthly_net_income=round(net_income, 2),
-                liquid_assets=round(rng.uniform(0, 1000), -2),
+                liquid_assets=liquid_assets,
                 state=self.state,
                 additional_context={
                     "is_boarder": True,
@@ -597,29 +709,34 @@ class SNAPEligibilityGenerator(Generator):
 
     def _build_migrant_case(self, rng: random.Random) -> TestCase:
         """Build a migrant/seasonal worker income averaging case (7 CFR 273.10(c)(3))."""
-        t = self.source.thresholds()
-        fy_config = self.source.fy_config
+        t = self.bbce_source.thresholds()
+        fy_config = self.bbce_source.fy_config
         hh_size = rng.randint(2, 4)
         limits = t.by_household_size(hh_size)
+        gross_limit = self._gross_limit(hh_size)
 
         work_months = rng.randint(4, 8)
         seasonal_total = round(
-            rng.uniform(limits.gross_monthly * work_months * 0.70, limits.gross_monthly * work_months * 1.20),
+            rng.uniform(gross_limit * work_months * 0.70, gross_limit * work_months * 1.20),
             2,
         )
         averaged_monthly = round(seasonal_total / work_months, 2)
 
-        net_income = self.source.calculate_net_income(
+        # Drawn once, used for both the determination and the scenario -- see the
+        # note in `_build_boarder_case`.
+        liquid_assets = round(rng.uniform(0, 800), -2)
+
+        net_income = self.bbce_source.calculate_net_income(
             gross_income=averaged_monthly,
             household_size=hh_size,
             earned_income=averaged_monthly,
         )
 
-        is_eligible, reason = self.source.is_eligible(
+        is_eligible, reason = self.bbce_source.is_eligible(
             household_size=hh_size,
             gross_income=averaged_monthly,
             net_income=net_income,
-            liquid_assets=round(rng.uniform(0, 800), -2),
+            liquid_assets=liquid_assets,
         )
 
         uid = build_short_uid(rng)
@@ -644,14 +761,14 @@ class SNAPEligibilityGenerator(Generator):
                 step_number=2,
                 title="Apply averaged income to gross income test",
                 rule_applied="7 CFR 273.9(a)(1)",
-                inputs={"averaged_monthly": averaged_monthly, "gross_limit": limits.gross_monthly},
+                inputs={"averaged_monthly": averaged_monthly, "gross_limit": gross_limit},
                 computation=(
                     f"${averaged_monthly:,.2f} "
-                    f"{'<=' if averaged_monthly <= limits.gross_monthly else '>'} "
-                    f"${limits.gross_monthly:,.2f} (130% FPL, {hh_size}-person HH)"
+                    f"{'<=' if averaged_monthly <= gross_limit else '>'} "
+                    f"${gross_limit:,.2f} ({self._gross_basis(hh_size)})"
                 ),
-                result="PASS" if averaged_monthly <= limits.gross_monthly else "FAIL",
-                is_determinative=averaged_monthly > limits.gross_monthly,
+                result="PASS" if averaged_monthly <= gross_limit else "FAIL",
+                is_determinative=averaged_monthly > gross_limit,
             ),
             ReasoningStep(
                 step_number=3,
@@ -681,7 +798,7 @@ class SNAPEligibilityGenerator(Generator):
                 household_size=hh_size,
                 monthly_gross_income=averaged_monthly,
                 monthly_net_income=round(net_income, 2),
-                liquid_assets=round(rng.uniform(0, 800), -2),
+                liquid_assets=liquid_assets,
                 state=self.state,
                 additional_context={
                     "is_migrant_worker": True,
@@ -730,28 +847,33 @@ class SNAPEligibilityGenerator(Generator):
         Ineligible members are excluded from household SIZE for limit lookup,
         but their income still counts in full.
         """
-        t = self.source.thresholds()
-        fy_config = self.source.fy_config
+        t = self.bbce_source.thresholds()
+        fy_config = self.bbce_source.fy_config
         total_members = rng.randint(3, 5)
         ineligible_count = 1
         eligible_count = total_members - ineligible_count  # HH size for limit lookup
 
         limits_reduced = t.by_household_size(eligible_count)
+        gross_limit_reduced = self._gross_limit(eligible_count)
 
         # Income near the reduced-size limit to make the case interesting
-        gross = round(rng.uniform(limits_reduced.gross_monthly * 0.80, limits_reduced.gross_monthly * 1.15), 2)
+        gross = round(rng.uniform(gross_limit_reduced * 0.80, gross_limit_reduced * 1.15), 2)
 
-        net_income = self.source.calculate_net_income(
+        # Drawn once, used for both the determination and the scenario -- see the
+        # note in `_build_boarder_case`.
+        liquid_assets = round(rng.uniform(0, 1500), -2)
+
+        net_income = self.bbce_source.calculate_net_income(
             gross_income=gross,
             household_size=eligible_count,  # Use reduced HH size for deductions
             earned_income=gross,
         )
 
-        is_eligible, reason = self.source.is_eligible(
+        is_eligible, reason = self.bbce_source.is_eligible(
             household_size=eligible_count,  # Reduced size for limit lookup
             gross_income=gross,  # Full income
             net_income=net_income,
-            liquid_assets=round(rng.uniform(0, 1500), -2),
+            liquid_assets=liquid_assets,
         )
 
         uid = build_short_uid(rng)
@@ -791,17 +913,17 @@ class SNAPEligibilityGenerator(Generator):
                 rule_applied="7 CFR 273.9(a)(1)",
                 inputs={
                     "gross_income": gross,
-                    "gross_limit": limits_reduced.gross_monthly,
+                    "gross_limit": gross_limit_reduced,
                     "hh_size_for_test": eligible_count,
                 },
                 computation=(
                     f"Using {eligible_count}-person household limits (after excluding "
                     f"ineligible member): ${gross:,.2f} "
-                    f"{'<=' if gross <= limits_reduced.gross_monthly else '>'} "
-                    f"${limits_reduced.gross_monthly:,.2f} (130% FPL)"
+                    f"{'<=' if gross <= gross_limit_reduced else '>'} "
+                    f"${gross_limit_reduced:,.2f} ({self._gross_basis(eligible_count)})"
                 ),
-                result="PASS" if gross <= limits_reduced.gross_monthly else "FAIL",
-                is_determinative=gross > limits_reduced.gross_monthly,
+                result="PASS" if gross <= gross_limit_reduced else "FAIL",
+                is_determinative=gross > gross_limit_reduced,
             ),
             ReasoningStep(
                 step_number=3,
@@ -836,7 +958,7 @@ class SNAPEligibilityGenerator(Generator):
                 household_size=total_members,
                 monthly_gross_income=gross,
                 monthly_net_income=round(net_income, 2),
-                liquid_assets=round(rng.uniform(0, 1500), -2),
+                liquid_assets=liquid_assets,
                 state=self.state,
                 additional_context={
                     "has_ineligible_members": True,
@@ -899,13 +1021,17 @@ class SNAPEligibilityGenerator(Generator):
 
         Income is set ABOVE the normal gross limit to demonstrate that the income test is skipped.
         """
-        t = self.source.thresholds()
-        fy_config = self.source.fy_config
+        fy_config = self.bbce_source.fy_config
         hh_size = rng.randint(1, 4)
-        limits = t.by_household_size(hh_size)
+        gross_limit = self._gross_limit(hh_size)
 
-        # Income ABOVE the gross limit — would be ineligible without categorical eligibility
-        gross = round(limits.gross_monthly * rng.uniform(1.10, 1.40), 2)
+        # Income ABOVE the GOVERNING gross limit — would be ineligible without
+        # categorical eligibility. The case only demonstrates that the income test
+        # is skipped if the income actually exceeds the limit the prompt states; a
+        # figure above the federal 130% limit but under a state's raised BBCE limit
+        # demonstrates nothing, and the prose asserting it "exceeds the limit"
+        # would be false.
+        gross = round(gross_limit * rng.uniform(1.10, 1.40), 2)
         unearned = round(rng.uniform(200, 600), -1)  # SSI/TANF benefit
 
         # Categorical eligibility skips the *income test*, but the benefit amount
@@ -913,7 +1039,7 @@ class SNAPEligibilityGenerator(Generator):
         # one before, so `estimate_monthly_benefit` had nothing to work from. Total
         # countable income is wages (earned) plus the TANF/SSI payment (unearned);
         # only the earned portion gets the 20% earned-income deduction.
-        net_income = self.source.calculate_net_income(
+        net_income = self.bbce_source.calculate_net_income(
             gross_income=gross + unearned,
             household_size=hh_size,
             earned_income=gross,
@@ -944,12 +1070,12 @@ class SNAPEligibilityGenerator(Generator):
                 rule_applied="7 CFR 273.2(j)(2)",
                 inputs={
                     "gross_income": gross,
-                    "gross_limit": limits.gross_monthly,
+                    "gross_limit": gross_limit,
                     "skipped": True,
                 },
                 computation=(
-                    f"NOTE: Gross income ${gross:,.2f} exceeds the ${limits.gross_monthly:,.2f} limit "
-                    f"(130% FPL for {hh_size}-person HH). However, the income test is not applied because "
+                    f"NOTE: Gross income ${gross:,.2f} exceeds the ${gross_limit:,.2f} limit "
+                    f"({self._gross_basis(hh_size)}). However, the income test is not applied because "
                     f"the household is categorically eligible. This is a common model error — running the "
                     f"income test after categorical eligibility is established incorrectly returns INELIGIBLE."
                 ),
@@ -989,7 +1115,8 @@ class SNAPEligibilityGenerator(Generator):
             expected_outcome="eligible",
             expected_answer=(
                 f"This household is ELIGIBLE for SNAP under categorical eligibility. "
-                f"Although gross income of ${gross:,.2f} exceeds the ${limits.gross_monthly:,.2f} limit, "
+                f"Although gross income of ${gross:,.2f} exceeds the ${gross_limit:,.2f} limit "
+                f"({self._gross_basis(hh_size)}), "
                 f"the household receives TANF/SSI benefits. Under 7 CFR 273.2(j)(2) and 7 CFR 273.11(c), "
                 f"these recipients are categorically eligible — the income test is skipped entirely."
             ),
@@ -1028,17 +1155,6 @@ class SNAPEligibilityGenerator(Generator):
             },
         )
 
-    def _bbce_source_for_case(self) -> SNAPBBCESource:
-        """Return a BBCE source with a raised gross limit for case construction.
-
-        Uses the generator's own state when it is BBCE with a limit above 130% FPL;
-        otherwise falls back to a representative 200%-FPL BBCE state (CA) so the
-        expanded-income case is always meaningful.
-        """
-        if self.bbce_source.is_bbce and self.bbce_source.bbce_params.gross_income_limit_pct_fpl > 130:
-            return self.bbce_source
-        return SNAPBBCESource(fiscal_year=self.fiscal_year, state="CA")
-
     def _build_bbce_expanded_income_case(self, rng: random.Random) -> TestCase:
         """Build a BBCE expanded-gross-limit case (7 CFR 273.2(j)(2)(ii)).
 
@@ -1047,8 +1163,24 @@ class SNAPEligibilityGenerator(Generator):
         household is INELIGIBLE under federal rules but ELIGIBLE under BBCE. An
         adversarial variant places gross income ABOVE the state BBCE limit (ineligible),
         and the net income test still binds throughout.
+
+        Raises ValueError for a jurisdiction with no such band -- see
+        `supports_bbce_expanded_income` for why this fails loudly rather than
+        substituting another jurisdiction's parameters. `generate()` never reaches
+        this path for such a jurisdiction; `_available_special_population_builders`
+        drops the builder instead.
         """
-        src = self._bbce_source_for_case()
+        if not self.supports_bbce_expanded_income:
+            p = self.bbce_source.bbce_params
+            raise ValueError(
+                f"{self.state} cannot support a BBCE expanded-gross-limit case: "
+                f"bbce={p.bbce}, gross_income_limit_pct_fpl={p.gross_income_limit_pct_fpl}. "
+                "The case needs a gross-income band between the federal 130% FPL limit "
+                "and a higher state limit. Use `supports_bbce_expanded_income` to check "
+                "before calling, or call generate(), which skips this type for such a "
+                "jurisdiction rather than borrowing another jurisdiction's parameters."
+            )
+        src = self.bbce_source
         state = src.state
         p = src.bbce_params
         fy_config = src.fy_config
@@ -1317,11 +1449,14 @@ class SNAPEligibilityGenerator(Generator):
         entirely) copy-pasted into eight call sites; routing all of them through
         one method makes a future formula change (or fix) land everywhere at once.
 
-        `source` defaults to `self.bbce_source` (this generator's own state) but
-        can be overridden -- `_build_bbce_expanded_income_case` sometimes builds
-        its case against a different state's `SNAPBBCESource` (see
-        `_bbce_source_for_case`), and the allotment must come from that same
-        state's table, not the generator's default one.
+        `source` remains overridable, but every builder now passes this
+        generator's own `self.bbce_source`: the case that used to build against a
+        DIFFERENT state's `SNAPBBCESource` (the removed `_bbce_source_for_case`,
+        which transplanted onto CA) no longer exists, so there is no longer a
+        legitimate reason for an allotment to come from another jurisdiction's
+        table. The parameter is kept because a caller passing the wrong source
+        here is the exact failure the old code shipped, and an explicit argument
+        keeps that visible at the call site rather than implicit in a default.
         """
         src = source or self.bbce_source
         return src.estimate_monthly_benefit(
