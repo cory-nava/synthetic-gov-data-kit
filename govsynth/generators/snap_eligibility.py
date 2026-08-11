@@ -269,6 +269,70 @@ class SNAPEligibilityGenerator(Generator):
             return f"{p.gross_income_limit_pct_fpl}% FPL BBCE limit, {self.state}, {household_size}-person HH"
         return f"130% FPL, {household_size}-person HH"
 
+    def _binding_gross_ceiling(
+        self,
+        household_size: int,
+        net_income_for: Callable[[float], float],
+    ) -> float:
+        """The gross income at which this case shape's determination actually flips.
+
+        A builder that samples income against the GROSS limit is anchoring on a test
+        that, in a raised-BBCE jurisdiction, does not bind. At 200% FPL the gross limit
+        is roughly twice the 100% FPL net limit, so income drawn near it clears the
+        gross test by a mile and fails the net test by a mile -- every draw lands on the
+        same side and the case type's label collapses to near-constant. Measured over
+        53 jurisdictions at 400 cases each, that is what the previous fix wave did:
+        `migrant_income_averaging` went from 60.4% eligible to 76.8% INELIGIBLE and
+        `mixed_immigration_status_hh_size_reduction` from 56.9% eligible to 82.3%
+        INELIGIBLE, with 0 eligible cases in either type across all 28 200%-FPL
+        jurisdictions. The labels were arithmetically correct; two adversarial case
+        types had simply become learnable by name with no counterexamples.
+
+        So the anchor is the flip point itself, found by bisecting `is_eligible` -- the
+        same source that decides the case and that the prompt is rendered from, never a
+        second reimplementation of the deduction waterfall that could drift from it.
+        `net_income_for` maps a candidate gross income to the net income THIS case shape
+        would report for it (which deductions apply is the builder's business, not this
+        method's), and the returned ceiling is the largest gross that still passes every
+        income test: the gross limit itself where the gross test binds first, and a
+        lower, net-test-derived figure where it does not.
+
+        Assumes net income is non-decreasing in gross income, which holds for every
+        builder that calls this (earned income only, no shelter or dependent-care
+        offset that shrinks as income grows) and makes the pass/fail predicate monotone.
+        Raises if the bracket does not actually bracket, rather than returning a
+        silently meaningless anchor.
+        """
+        limit = self._gross_limit(household_size)
+
+        def passes(gross: float) -> bool:
+            eligible, _reason = self.bbce_source.is_eligible(
+                household_size=household_size,
+                gross_income=gross,
+                net_income=net_income_for(gross),
+            )
+            return eligible
+
+        if passes(limit):
+            # The gross test binds first (a non-BBCE jurisdiction, or a shape whose
+            # deductions keep net income under the limit right up to the gross ceiling).
+            return limit
+        if not passes(0.0):
+            raise RuntimeError(
+                f"{self.state}: a {household_size}-person household is ineligible at $0 gross income, "
+                "so no income makes this case eligible and there is no boundary to sample around. "
+                "The deduction structure or threshold table for this jurisdiction is wrong."
+            )
+
+        lo, hi = 0.0, limit
+        while hi - lo > 0.01:  # a cent: finer than any figure a case reports
+            mid = (lo + hi) / 2.0
+            if passes(mid):
+                lo = mid
+            else:
+                hi = mid
+        return lo
+
     def _build_special_population_cases(self, n: int, rng: random.Random) -> list[TestCase]:
         """Build n special-population edge cases, cycling through the available types.
 
@@ -732,9 +796,23 @@ class SNAPEligibilityGenerator(Generator):
         limits = t.by_household_size(hh_size)
         gross_limit = self._gross_limit(hh_size)
 
+        # Earnings are drawn around the income at which this case's determination
+        # actually flips, not around the gross limit -- which in a 200%-FPL
+        # jurisdiction is roughly twice the binding net limit, so every draw near it
+        # lands ineligible and this case type's label goes constant. See
+        # `_binding_gross_ceiling`. The 0.70-1.20 band is unchanged; only what it is a
+        # band AROUND changed, which is what restores the ~60/40 label mix.
+        ceiling = self._binding_gross_ceiling(
+            hh_size,
+            lambda gross: self.bbce_source.calculate_net_income(
+                gross_income=gross,
+                household_size=hh_size,
+                earned_income=gross,
+            ),
+        )
         work_months = rng.randint(4, 8)
         seasonal_total = round(
-            rng.uniform(gross_limit * work_months * 0.70, gross_limit * work_months * 1.20),
+            rng.uniform(ceiling * work_months * 0.70, ceiling * work_months * 1.20),
             2,
         )
         averaged_monthly = round(seasonal_total / work_months, 2)
@@ -873,8 +951,22 @@ class SNAPEligibilityGenerator(Generator):
         limits_reduced = t.by_household_size(eligible_count)
         gross_limit_reduced = self._gross_limit(eligible_count)
 
-        # Income near the reduced-size limit to make the case interesting
-        gross = round(rng.uniform(gross_limit_reduced * 0.80, gross_limit_reduced * 1.15), 2)
+        # Income near the point where this case's determination flips, computed on the
+        # REDUCED household size (the size every limit lookup here uses). Anchoring on
+        # the reduced-size gross limit instead put every draw in a 200%-FPL
+        # jurisdiction far inside the gross limit and far outside the net one, which
+        # collapsed this case type to 82.3% ineligible overall and 100% ineligible
+        # across all 28 such jurisdictions -- see `_binding_gross_ceiling`. The
+        # 0.80-1.15 band is unchanged.
+        ceiling_reduced = self._binding_gross_ceiling(
+            eligible_count,
+            lambda gross: self.bbce_source.calculate_net_income(
+                gross_income=gross,
+                household_size=eligible_count,
+                earned_income=gross,
+            ),
+        )
+        gross = round(rng.uniform(ceiling_reduced * 0.80, ceiling_reduced * 1.15), 2)
 
         # Drawn once, used for both the determination and the scenario -- see the
         # note in `_build_boarder_case`.
