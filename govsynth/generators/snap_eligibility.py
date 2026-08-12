@@ -124,6 +124,7 @@ class SNAPEligibilityGenerator(Generator):
         n: int,
         profile_strategy: str = "edge_saturated",
         seed: int | None = None,
+        special_fraction: float = 0.20,
     ) -> list[TestCase]:
         """Generate n SNAP eligibility test cases.
 
@@ -135,6 +136,17 @@ class SNAPEligibilityGenerator(Generator):
             n: Number of cases to generate.
             profile_strategy: 'edge_saturated' | 'uniform' | 'realistic'
             seed: RNG seed for reproducibility.
+            special_fraction: share of cases drawn from the special-population
+                builders under 'edge_saturated'. Defaults to 0.20, which left
+                the ten threshold-boundary income variants holding 74% of a
+                13,760-record training set and only 12 distinct citation sets
+                across the whole corpus -- 80% of rendered targets opened with
+                the byte-identical line "Step 1: Check gross income limit". A
+                fine-tune on that corpus learned the dominant template so
+                strongly that held-out cases outside it degenerated into
+                repetition loops. Raise it to broaden the reasoning-path and
+                citation mix; the floor below still guarantees >= 1 case per
+                available builder regardless of this value.
 
         Returns:
             List of TestCase objects.
@@ -157,7 +169,9 @@ class SNAPEligibilityGenerator(Generator):
             return cases
 
         # edge_saturated: two-phase split
-        n_special = max(0, min(int(n * 0.20), n))
+        if not 0.0 <= special_fraction <= 1.0:
+            raise ValueError(f"special_fraction must be in [0.0, 1.0], got {special_fraction!r}")
+        n_special = max(0, min(int(n * special_fraction), n))
         # Guarantee >= 1 per available type once n is at least that many. Keyed on
         # the AVAILABLE builder count, not a hardcoded 7: a jurisdiction that
         # cannot support the BBCE expanded-income case has six types, and a

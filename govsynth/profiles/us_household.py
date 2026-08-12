@@ -341,6 +341,26 @@ def _build_snap_threshold_profile(
         assets = round(t.asset_limit_general * 0.5, 0) if t.asset_limit_general else 500.0
 
     elif threshold == "net_income_limit":
+        # Elderly/disabled status is orthogonal to which threshold binds, but it
+        # used to be reachable ONLY through the asset_limit_elderly_disabled
+        # threshold above. That threshold is dropped from sampling entirely in a
+        # BBCE state that waives the asset test (see
+        # snap_eligibility._sample_edge_profile), so in most BBCE states NO edge
+        # case ever contained an elderly or disabled member -- and the
+        # "gross income test waived for elderly/disabled households" reasoning
+        # path reached only 3.2% of a 13,760-record training set. A fine-tune on
+        # that set degenerated into verbatim repetition loops on exactly the
+        # held-out BBCE + elderly/disabled cases it had never been shown.
+        #
+        # The net income test still binds for these households (only the GROSS
+        # test is waived, 7 CFR 273.9(a)(2)), so this threshold is the correct
+        # place to sample it: the case stays anchored on a test that actually
+        # applies. 0.40 is close to the FNS SNAP Household Characteristics share
+        # of households containing an elderly or disabled member, so it makes the
+        # mix more realistic rather than merely more varied. Deliberately NOT
+        # sampled for the gross_income_limit threshold, where a waived gross test
+        # would leave that case anchored on a test that does not bind.
+        has_elderly = rng.random() < 0.40
         # Back-calculate gross income that yields net income at the limit
         std_ded = get_standard_deduction(household_size)
         # net = gross - (gross * 0.20) - std = gross * 0.80 - std
