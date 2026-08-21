@@ -1,7 +1,7 @@
 """No adversarial case type may be answerable from its own name.
 
 Every case in this kit can be arithmetically correct and still be a bad training
-signal. The seven special-population builders each stamp their case type into the
+signal. The nine special-population builders each stamp their case type into the
 scenario prose in plain English -- "a college student enrolled half-time",
 "receives TANF/SSI", "takes in a boarder", "a migrant agricultural worker",
 "mixed immigration status". If a case type's label is (near-)constant, a model
@@ -71,6 +71,10 @@ MUST_VARY = (
     # number a model has to derive rather than read -- so a collapsed label would
     # make the case type answerable from the phrase "self-employed" alone.
     "_build_self_employment_case",
+    # 13 status variants, 8 of them eligible. The label must keep varying because
+    # the phrase "lawful permanent resident" appears in both answers -- what decides
+    # the case is the status held BEFORE adjusting, which no case-type name carries.
+    "_build_noncitizen_status_case",
 )
 MAX_MAJORITY_SHARE = 0.85
 
@@ -94,8 +98,8 @@ def outcomes(state: str, builder_name: str, seeds: int = SEEDS) -> Counter:
 def test_every_special_population_builder_is_classified() -> None:
     """No builder may be added without deciding whether its label is allowed to be constant.
 
-    The whole failure mode here is a case type nobody looked at. A new seventh (or
-    eighth) builder that lands outside all three sets below is unclassified, and
+    The whole failure mode here is a case type nobody looked at. Any newly added
+    builder that lands outside all three sets below is unclassified, and
     unclassified means unchecked.
     """
     generator = SNAPEligibilityGenerator(fiscal_year=FISCAL_YEAR, state="MD")

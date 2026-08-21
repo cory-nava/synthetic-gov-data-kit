@@ -77,11 +77,11 @@ class SNAPEligibilityGenerator(Generator):
     misapply that specific rule, not because of any threshold distance. For a
     typical 'edge_saturated' run, roughly 20% of output is ADVERSARIAL.
 
-    Six of those seven builders apply to every jurisdiction. The seventh,
+    Eight of those nine builders apply to every jurisdiction. The ninth,
     _build_bbce_expanded_income_case, needs a gross-income band between the
     federal 130% FPL limit and a HIGHER state limit, which a jurisdiction that
     has not adopted BBCE (or adopted it at 130% FPL) does not have. Such a
-    jurisdiction generates the other six types instead -- see
+    jurisdiction generates the other eight types instead -- see
     `supports_bbce_expanded_income`. It never borrows another jurisdiction's
     parameters to manufacture the case.
     """
@@ -202,7 +202,7 @@ class SNAPEligibilityGenerator(Generator):
     def _special_population_builders(
         self,
     ) -> list[tuple[str, Callable[[random.Random], TestCase]]]:
-        """Name/callable pairs for the 7 special-population builders.
+        """Name/callable pairs for the 9 special-population builders.
 
         Extracted so tests can inspect the pairing (name matches the callable's
         __name__) without invoking any builder.
@@ -214,6 +214,7 @@ class SNAPEligibilityGenerator(Generator):
             ("_build_self_employment_case", self._build_self_employment_case),
             ("_build_migrant_case", self._build_migrant_case),
             ("_build_mixed_immigration_case", self._build_mixed_immigration_case),
+            ("_build_noncitizen_status_case", self._build_noncitizen_status_case),
             ("_build_categorical_eligibility_case", self._build_categorical_eligibility_case),
             ("_build_bbce_expanded_income_case", self._build_bbce_expanded_income_case),
         ]
@@ -1121,6 +1122,610 @@ class SNAPEligibilityGenerator(Generator):
             metadata={
                 "generator": "SNAPEligibilityGenerator",
                 "profile_strategy": "self_employment_cost_of_doing_business",
+                "state": self.state,
+                "fiscal_year": self.fiscal_year,
+            },
+        )
+
+    # Current law after P.L. 119-21 sec 10108, enacted 2025-07-04, which rewrote
+    # section 6(f) of the Food and Nutrition Act of 2008 (7 U.S.C. 2015(f)). FNS
+    # directs states to apply it to applications and redeterminations processed on
+    # or after 2025-11-01 -- two different dates, and conflating them is itself a
+    # ground-truth bug, so every case states the one that governs its own facts.
+    #
+    # Only these noncitizen categories remain eligible by status: lawful permanent
+    # residents, Cuban and Haitian entrants, and Compact of Free Association
+    # citizens, alongside U.S. citizens and U.S. non-citizen nationals. Refugees and
+    # asylees lost status-based eligibility.
+    #
+    # DELIBERATE TRAP: 7 CFR 273.4(a)(6)(ii) has NOT been amended. It still lists
+    # refugees under INA 207 and asylees under INA 208 as eligible and exempt from
+    # the five-year bar. A model reasoning from the CFR sounds authoritative and is
+    # wrong -- the statute controls -- and a model reasoning from pre-2025 training
+    # data reaches the same wrong answer. That is the single largest measured gap in
+    # this category (66% pooled across six models, n=204), so the cases below cite
+    # the statute and say what the stale regulation would have said.
+    #
+    # Whether an LPR is subject to the five-year bar (8 U.S.C. 1613) turns on the
+    # status held BEFORE adjusting. Per FNS implementation guidance, refugees,
+    # asylees, withheld-deportation, Cuban and Haitian entrants, Amerasians, COFA
+    # citizens, American Indians born abroad, Hmong and Highland Laotian tribal
+    # members, Iraqi and Afghan special immigrants, trafficking victims, and Afghan
+    # or Ukrainian nationals paroled inside specific windows are NOT subject.
+    # Conditional entrants, battered immigrants, and general one-year parolees ARE.
+    # Cases 3-8 below are matched pairs on exactly that distinction: same household,
+    # same income, same current status, opposite answers.
+    _NONCITIZEN_STATUS_CASES = (
+        {
+            "key": "refugee_not_adjusted",
+            "phrase": (
+                "was admitted to the United States as a refugee under section 207 of the "
+                "Immigration and Nationality Act and has not adjusted to lawful permanent "
+                "resident status"
+            ),
+            "category": "refugee",
+            "category_eligible": False,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Refugee is not one of the noncitizen categories eligible for SNAP. P.L. 119-21 "
+                "sec 10108 rewrote section 6(f) of the Food and Nutrition Act of 2008 and limited "
+                "eligibility to U.S. citizens, U.S. non-citizen nationals, lawful permanent "
+                "residents, Cuban and Haitian entrants, and citizens of the Compact of Free "
+                "Association states. Refugees and asylees lost status-based eligibility."
+            ),
+            "stale_reg_warning": True,
+            "bar": None,
+        },
+        {
+            "key": "asylee_not_adjusted",
+            "phrase": (
+                "was granted asylum under section 208 of the Immigration and Nationality Act "
+                "and has not adjusted to lawful permanent resident status"
+            ),
+            "category": "asylee",
+            "category_eligible": False,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Asylee is not one of the noncitizen categories eligible for SNAP. P.L. 119-21 "
+                "sec 10108 limited eligibility to U.S. citizens, U.S. non-citizen nationals, "
+                "lawful permanent residents, Cuban and Haitian entrants, and citizens of the "
+                "Compact of Free Association states."
+            ),
+            "stale_reg_warning": True,
+            "bar": None,
+        },
+        {
+            "key": "lpr_adjusted_from_refugee",
+            "phrase": (
+                "entered the United States as a refugee under section 207 of the INA and "
+                "adjusted to lawful permanent resident status 2 years ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "The five-year waiting period is keyed to the status held before adjusting to "
+                    "LPR. This applicant entered as a refugee, and a refugee who adjusts to LPR is "
+                    "NOT subject to the five-year waiting period, so the 2 years since adjustment "
+                    "does not matter."
+                ),
+            },
+        },
+        {
+            "key": "lpr_adjusted_from_asylee",
+            "phrase": (
+                "was granted asylum under section 208 of the INA and adjusted to lawful "
+                "permanent resident status 18 months ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "An asylee who adjusts to LPR is not subject to the five-year waiting period, "
+                    "so 18 months of LPR status is not a barrier."
+                ),
+            },
+        },
+        {
+            "key": "lpr_adjusted_from_trafficking_victim",
+            "phrase": (
+                "was certified as a victim of a severe form of trafficking in persons and "
+                "adjusted to lawful permanent resident status 1 year ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "A certified victim of a severe form of trafficking who adjusts to LPR is not "
+                    "subject to the five-year waiting period."
+                ),
+            },
+        },
+        {
+            "key": "lpr_adjusted_from_battered_immigrant",
+            "phrase": (
+                "held status as a battered non-citizen spouse with a petition pending and "
+                "adjusted to lawful permanent resident status 2 years ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": True,
+                "why": (
+                    "Unlike a refugee or asylee, a battered non-citizen who adjusts to LPR IS "
+                    "subject to the five-year waiting period. Only 2 of the required 5 years since "
+                    "obtaining qualified status have elapsed, and none of the exceptions apply: the "
+                    "applicant is over 18, has fewer than 40 qualifying work quarters, is not blind "
+                    "or disabled, was not lawfully residing in the U.S. and aged 65 or older on "
+                    "1996-08-22, and has no U.S. military connection."
+                ),
+            },
+        },
+        {
+            "key": "lpr_adjusted_from_conditional_entrant",
+            "phrase": (
+                "was granted conditional entry under section 203(a)(7) of the INA as in effect "
+                "before 1980-04-01 and adjusted to lawful permanent resident status 3 years ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": True,
+                "why": (
+                    "A conditional entrant who adjusts to LPR IS subject to the five-year waiting "
+                    "period -- this is the distinction from a refugee or asylee, who is not. Only 3 "
+                    "of the required 5 years have elapsed and no exception applies."
+                ),
+            },
+        },
+        {
+            "key": "lpr_recent_no_exemption",
+            "phrase": (
+                "obtained lawful permanent resident status 3 years ago through a family-based "
+                "petition, with no prior humanitarian immigration status"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": True,
+                "why": (
+                    "An LPR is eligible only after a five-year waiting period that begins on the "
+                    "date qualified-immigrant status was obtained. Only 3 of the 5 years have "
+                    "elapsed, and no exception applies: the applicant is over 18, has fewer than 40 "
+                    "qualifying work quarters, is not blind or disabled, was not lawfully residing "
+                    "in the U.S. and aged 65 or older on 1996-08-22, and has no U.S. military "
+                    "connection."
+                ),
+            },
+        },
+        {
+            "key": "lpr_recent_forty_quarters",
+            "phrase": (
+                "obtained lawful permanent resident status 3 years ago and has been credited "
+                "with 42 qualifying work quarters under the Social Security Act"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "Only 3 of the 5 years have elapsed, but an LPR credited with 40 or more "
+                    "qualifying work quarters is eligible with no waiting period. 42 quarters "
+                    "exceeds the 40 required, so the waiting period does not apply."
+                ),
+            },
+        },
+        {
+            "key": "lpr_recent_veteran",
+            "phrase": (
+                "obtained lawful permanent resident status 1 year ago and is an honorably "
+                "discharged veteran of the U.S. armed forces"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "An LPR with a U.S. military connection -- active duty other than National "
+                    "Guard, or an honorable discharge not on account of immigration status -- is "
+                    "eligible with no waiting period, so 1 year of LPR status is not a barrier. A "
+                    "discharge 'under honorable conditions' would NOT meet this requirement; this "
+                    "applicant's discharge was honorable."
+                ),
+            },
+        },
+        {
+            "key": "lpr_beyond_five_years",
+            "phrase": "has held lawful permanent resident status for 8 years",
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "8 years of qualified-immigrant status exceeds the five-year waiting period, so "
+                    "no exception is needed."
+                ),
+            },
+        },
+        {
+            "key": "cuban_haitian_entrant",
+            "phrase": (
+                "is a Cuban or Haitian entrant under section 501(e) of the Refugee Education "
+                "Assistance Act of 1980, admitted 2 years ago"
+            ),
+            "category": "Cuban or Haitian entrant",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Cuban and Haitian entrants are one of the three noncitizen categories that "
+                "P.L. 119-21 sec 10108 left eligible for SNAP."
+            ),
+            "bar": None,
+        },
+        {
+            "key": "cofa_citizen",
+            "phrase": (
+                "is a citizen of the Federated States of Micronesia lawfully residing in the "
+                "United States under section 141 of the Compact of Free Association, having "
+                "arrived 1 year ago"
+            ),
+            "category": "Compact of Free Association citizen",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Citizens of the Federated States of Micronesia, the Republic of the Marshall "
+                "Islands and the Republic of Palau lawfully residing in the U.S. under the "
+                "Compacts of Free Association are one of the three noncitizen categories that "
+                "P.L. 119-21 sec 10108 left eligible for SNAP."
+            ),
+            "bar": None,
+        },
+    )
+
+    def _build_noncitizen_status_case(self, rng: random.Random) -> TestCase:
+        """Build a noncitizen status/five-year-bar case (7 U.S.C. 2015(f); 8 U.S.C. 1613).
+
+        Citizenship and noncitizenship status was the weakest of the four measured
+        QC error elements -- 66% pooled across six models over n=204 -- and the
+        generator produced nothing for it beyond a single coarse mixed-status case.
+
+        Every case is a one-person household with income comfortably inside both
+        income limits, so the determination turns entirely on status. That mirrors
+        `_build_student_case`: the point is that a non-financial rule decides the
+        case before the income test is reached, and the income is stated so a model
+        that reaches for it can be seen doing so.
+
+        Two things make this hard in a way that is not answerable from the case
+        type name:
+
+        - The governing law changed on 2025-07-04 and 7 CFR 273.4(a)(6)(ii) still
+          contradicts it, so both a model citing the current CFR and a model
+          reasoning from pre-2025 knowledge get refugee and asylee cases wrong.
+        - Whether an LPR faces the five-year bar depends on the status held BEFORE
+          adjusting, not on the current status or the elapsed time. Refugee-to-LPR
+          and battered-immigrant-to-LPR are identical on the face of the record --
+          both are LPRs, both adjusted within the last five years -- and get
+          opposite answers.
+
+        Single-person households are deliberate: an ineligible member inside a
+        larger household raises the income-counting election in 7 CFR
+        273.11(c)(3), which `_build_mixed_immigration_case` already covers. Keeping
+        the two apart stops this builder from silently generating a second, weaker
+        version of that case.
+        """
+        fy_config = self.bbce_source.fy_config
+        hh_size = 1
+        spec = self._NONCITIZEN_STATUS_CASES[rng.randrange(len(self._NONCITIZEN_STATUS_CASES))]
+
+        bar = spec["bar"]
+        bar_blocks = bool(bar and bar["applies"])
+        is_eligible = bool(spec["category_eligible"]) and not bar_blocks
+
+        # Income placed well inside the flip point so the financial tests always pass
+        # and status is the only thing deciding the case. Anchored on the binding
+        # ceiling rather than the gross limit for the usual reason: in a raised-BBCE
+        # jurisdiction the gross limit does not bind, so a fraction of it is not
+        # reliably inside the net limit (see `_binding_gross_ceiling`).
+        ceiling = self._binding_gross_ceiling(
+            hh_size,
+            lambda gross: self.bbce_source.calculate_net_income(
+                gross_income=gross,
+                household_size=hh_size,
+                earned_income=gross,
+            ),
+        )
+        gross = round(ceiling * rng.uniform(0.40, 0.75), 2)
+        liquid_assets = round(rng.uniform(0, 1200), -2)
+
+        net_income = self.bbce_source.calculate_net_income(
+            gross_income=gross,
+            household_size=hh_size,
+            earned_income=gross,
+        )
+        gross_limit = self._gross_limit(hh_size)
+        limits = self.bbce_source.thresholds().by_household_size(hh_size)
+
+        uid = build_short_uid(rng)
+        outcome = "eligible" if is_eligible else "ineligible"
+        case_id = (
+            f"snap.{self.state.lower()}.eligibility."
+            f"noncitizen_status_{spec['key']}.{outcome}.hh{hh_size}.{uid}"
+        )
+
+        steps = [
+            ReasoningStep(
+                step_number=1,
+                title="Determine whether the applicant's immigration status is an eligible category",
+                rule_applied=spec["category_rule"],
+                inputs={
+                    "claimed_status": spec["category"],
+                    "eligible_categories": [
+                        "U.S. citizen",
+                        "U.S. non-citizen national",
+                        "lawful permanent resident",
+                        "Cuban or Haitian entrant",
+                        "Compact of Free Association citizen",
+                    ],
+                    "governing_law_effective": "2025-07-04",
+                    "state_implementation_date": "2025-11-01",
+                },
+                computation=spec["category_why"],
+                result=(
+                    f"PASS — {spec['category']} is an eligible category"
+                    if spec["category_eligible"]
+                    else f"INELIGIBLE — {spec['category']} is not an eligible category"
+                ),
+                is_determinative=not spec["category_eligible"],
+                note=(
+                    "7 CFR 273.4(a)(6)(ii) has not been amended to match and still lists refugees "
+                    "under INA 207 and asylees under INA 208 as eligible and exempt from the "
+                    "five-year bar. The statute controls: the regulation is stale, not an "
+                    "alternative reading."
+                    if spec.get("stale_reg_warning")
+                    else None
+                ),
+            )
+        ]
+
+        if spec["category_eligible"] and bar is not None:
+            steps.append(
+                ReasoningStep(
+                    step_number=2,
+                    title="Apply the five-year waiting period for lawful permanent residents",
+                    rule_applied="8 U.S.C. 1613; 7 U.S.C. 2015(f)",
+                    inputs={
+                        "status_before_adjusting_to_lpr": spec["key"],
+                        "exceptions_checked": [
+                            "under_age_18",
+                            "40_qualifying_quarters",
+                            "blind_or_disabled",
+                            "lawfully_residing_and_65_on_1996_08_22",
+                            "us_military_connection",
+                        ],
+                    },
+                    computation=bar["why"],
+                    result=(
+                        "INELIGIBLE — five-year waiting period not met and no exception applies"
+                        if bar["applies"]
+                        else "PASS — five-year waiting period does not bar this applicant"
+                    ),
+                    is_determinative=bar["applies"],
+                )
+            )
+
+        if is_eligible:
+            steps.append(
+                ReasoningStep(
+                    step_number=len(steps) + 1,
+                    title="Gross income test",
+                    rule_applied="7 CFR 273.9(a)(1)",
+                    inputs={
+                        "gross_income": gross,
+                        "gross_limit": gross_limit,
+                        "household_size": hh_size,
+                    },
+                    computation=(
+                        f"${gross:,.2f} "
+                        f"{'<=' if gross <= gross_limit else '>'} "
+                        f"${gross_limit:,.2f} ({self._gross_basis(hh_size)})"
+                    ),
+                    result="PASS" if gross <= gross_limit else "FAIL",
+                    is_determinative=False,
+                )
+            )
+            steps.append(
+                ReasoningStep(
+                    step_number=len(steps) + 1,
+                    title="Net income test",
+                    rule_applied="7 CFR 273.9(a)(2)",
+                    inputs={
+                        "net_income": round(net_income, 2),
+                        "net_limit": limits.net_monthly,
+                    },
+                    computation=(
+                        f"${net_income:,.2f} "
+                        f"{'<=' if net_income <= limits.net_monthly else '>'} "
+                        f"${limits.net_monthly:,.2f} (100% FPL, {hh_size}-person HH)"
+                    ),
+                    result="PASS" if net_income <= limits.net_monthly else "FAIL",
+                    is_determinative=False,
+                )
+            )
+
+        else:
+            # Every case needs a second step (TestCase requires two) and, more to the
+            # point, a denial on status should show what the income test WOULD have
+            # said -- otherwise a reader cannot tell whether status decided the case
+            # or the household simply had too much income. Stating the governing
+            # limit here also puts these cases under the same stated-limit gate as
+            # every financial case.
+            steps.append(
+                ReasoningStep(
+                    step_number=len(steps) + 1,
+                    title="Income test not reached",
+                    rule_applied="7 CFR 273.9(a)(1)",
+                    inputs={
+                        "gross_income": gross,
+                        "gross_limit": gross_limit,
+                        "household_size": hh_size,
+                    },
+                    computation=(
+                        f"Not reached. The applicant is ineligible on "
+                        f"{'the five-year waiting period' if bar_blocks else 'immigration status category'} "
+                        f"before any income test applies. For completeness, gross income of "
+                        f"${gross:,.2f} is within the ${gross_limit:,.2f} limit "
+                        f"({self._gross_basis(hh_size)}), so income is not what denies this case."
+                    ),
+                    result="NOT REACHED — denial is on status, not income",
+                    is_determinative=False,
+                )
+            )
+
+        if is_eligible:
+            answer_tail = (
+                f"Income of ${gross:,.2f} is within the ${gross_limit:,.2f} gross limit "
+                f"({self._gross_basis(hh_size)}) and net income of ${net_income:,.2f} is within the "
+                f"${limits.net_monthly:,.2f} net limit."
+            )
+        elif not spec["category_eligible"]:
+            answer_tail = (
+                f"The income test is not reached: status decides the case. Income of "
+                f"${gross:,.2f} would have been within the ${gross_limit:,.2f} gross limit."
+            )
+        else:
+            answer_tail = (
+                f"The income test is not reached: the five-year waiting period decides the case. "
+                f"Income of ${gross:,.2f} would have been within the ${gross_limit:,.2f} gross limit."
+            )
+
+        return TestCase(
+            case_id=case_id,
+            program=Program.SNAP.value,
+            jurisdiction=f"us.{self.state.lower()}",
+            task_type=TaskType.ELIGIBILITY,
+            difficulty=Difficulty.ADVERSARIAL,
+            scenario=ScenarioBlock(
+                summary=(
+                    f"A single applicant in {self.state} applying for SNAP in November 2025 or "
+                    f"later. The applicant {spec['phrase']}. Monthly gross income is "
+                    f"${gross:,.2f}, all from wages, and countable liquid assets are "
+                    f"${liquid_assets:,.0f}. The applicant is over 18, is not blind or disabled, "
+                    f"and is not elderly."
+                ),
+                household_size=hh_size,
+                monthly_gross_income=gross,
+                monthly_net_income=round(net_income, 2),
+                liquid_assets=liquid_assets,
+                state=self.state,
+                additional_context={
+                    "threshold_type": "noncitizen_status_eligibility",
+                    "noncitizen_case": spec["key"],
+                    "claimed_status": spec["category"],
+                    "status_category_eligible": bool(spec["category_eligible"]),
+                    "five_year_bar_applies": bar_blocks,
+                    "governing_law": "P.L. 119-21 sec 10108 (2025-07-04)",
+                    "monthly_allotment": (
+                        self._estimate_benefit(hh_size, net_income) if is_eligible else None
+                    ),
+                },
+            ),
+            task=TaskBlock(instruction=_TASK_INSTRUCTION),
+            expected_outcome=outcome,
+            expected_answer=(
+                f"This applicant is {'ELIGIBLE' if is_eligible else 'INELIGIBLE'} for SNAP. "
+                f"{spec['category_why']} "
+                + (f"{bar['why']} " if spec["category_eligible"] and bar is not None else "")
+                + answer_tail
+            ),
+            rationale_trace=RationaleTrace(
+                steps=steps,
+                conclusion=(
+                    f"{'ELIGIBLE' if is_eligible else 'INELIGIBLE'}. "
+                    + (
+                        f"{spec['category']} is not an eligible noncitizen category under "
+                        f"7 U.S.C. 2015(f) as amended by P.L. 119-21 sec 10108."
+                        if not spec["category_eligible"]
+                        else (
+                            "The five-year waiting period under 8 U.S.C. 1613 is not met and no "
+                            "exception applies."
+                            if bar_blocks
+                            else "Status is eligible and both income tests pass."
+                        )
+                    )
+                ),
+                policy_basis=[
+                    PolicyCitation(
+                        document="Public Law 119-21",
+                        section="sec 10108 (amending 7 U.S.C. 2015(f))",
+                        year=2025,
+                        url="https://www.congress.gov/bill/119th-congress/house-bill/1/text",
+                    ),
+                    PolicyCitation(
+                        document="8 U.S.C. 1613",
+                        section="five-year limited eligibility for qualified aliens",
+                        year=self.fiscal_year,
+                        url="https://www.law.cornell.edu/uscode/text/8/1613",
+                    ),
+                ],
+            ),
+            variation_tags=["noncitizen_status_eligibility", spec["key"]],
+            source_citations=[
+                "P.L. 119-21 sec 10108 (2025-07-04)",
+                "USDA FNS, SNAP Implementation of the One Big Beautiful Bill Act of 2025 — Alien SNAP Eligibility",
+                f"USDA FNS SNAP Income and Resource Limits {fy_config.period_label}",
+            ],
+            seed=None,
+            metadata={
+                "generator": "SNAPEligibilityGenerator",
+                "profile_strategy": "noncitizen_status_eligibility",
                 "state": self.state,
                 "fiscal_year": self.fiscal_year,
             },
