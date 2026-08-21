@@ -1275,10 +1275,34 @@ class SNAPEligibilityGenerator(Generator):
         )
 
     def _build_mixed_immigration_case(self, rng: random.Random) -> TestCase:
-        """Build a mixed immigration status case (7 CFR 273.4(c)(3)).
+        """Build a mixed immigration status case (7 CFR 273.11(c)(3)).
 
-        Ineligible members are excluded from household SIZE for limit lookup,
-        but their income still counts in full.
+        Ineligible members are excluded from the household SIZE used for the limit
+        lookup, and this case counts their income in full.
+
+        Counting in full is a STATE ELECTION, not the only federal rule. 7 CFR
+        273.11(c)(3)(i) reads: the State agency "must count all or, at the
+        discretion of the State agency, all but a pro rata share, of the
+        ineligible alien's income and deductible expenses". A state may even
+        split the two tests -- counting all of the income for the gross income
+        test while counting all but a pro rata share for the net income test and
+        the benefit level. This builder generates the count-all election and says
+        so, rather than asserting a federal rule that does not exist.
+
+        The election is only available here because the ineligible member is a
+        NON-QUALIFIED alien. 273.11(c)(3)(i) does not apply to an alien in the
+        (A)-(G) list -- LPRs, asylees under INA 208, refugees under INA 207,
+        parolees under 212(d)(5), withheld-deportation, certain aged/blind/
+        disabled, and special agricultural workers. For those, (c)(3)(ii) gives
+        the state a different pair of options and full counting is not one of
+        them, so a case whose ineligible member is an LPR inside the five-year
+        bar cannot use this shape.
+
+        Do not cite 7 CFR 273.4(c) for any of this: that paragraph is SPONSOR
+        DEEMING, a different mechanism that attributes a sponsor's income to the
+        sponsored alien. 273.11(c)(3)(v) points the other way and forbids
+        counting the sponsor's income when determining an ineligible sponsored
+        alien's own income.
         """
         t = self.bbce_source.thresholds()
         fy_config = self.bbce_source.fy_config
@@ -1333,20 +1357,25 @@ class SNAPEligibilityGenerator(Generator):
         steps = [
             ReasoningStep(
                 step_number=1,
-                title="Identify household composition — mixed immigration status (7 CFR 273.4(c)(3))",
-                rule_applied="7 CFR 273.4(c)(3)",
+                title="Identify household composition — mixed immigration status (7 CFR 273.11(c)(3))",
+                rule_applied="7 CFR 273.11(c)(3)",
                 inputs={
                     "total_members": total_members,
                     "ineligible_members": ineligible_count,
                     "eligible_members": eligible_count,
+                    "income_election": "count_all",
                 },
                 computation=(
                     f"Total household members: {total_members}. Ineligible (non-qualified "
-                    f"alien) members: {ineligible_count}. Under 7 CFR 273.4(c)(3), ineligible "
-                    f"members are excluded from household size for limit lookup. "
+                    f"alien) members: {ineligible_count}. Under 7 CFR 273.11(c)(3), an ineligible "
+                    f"alien is excluded from the household size used for the limit lookup. "
                     f"HH size for limit lookup: {total_members} − {ineligible_count} = {eligible_count}. "
-                    f"NOTE: Their income still counts in full — this is NOT income proration "
-                    f"(income proration applies only to sponsored noncitizens under 7 CFR 273.11(c)(3))."
+                    f"Income: 273.11(c)(3)(i) requires the State agency to \"count all or, at the "
+                    f"discretion of the State agency, all but a pro rata share, of the ineligible "
+                    f"alien's income and deductible expenses\". This jurisdiction counts all of it, "
+                    f"so the full ${gross:,.2f} is tested against {eligible_count}-person limits. "
+                    f"A state electing the pro rata option would instead count "
+                    f"{eligible_count}/{total_members} of it."
                 ),
                 result=(
                     f"HH size for limit lookup: {eligible_count} (reduced from {total_members}). "
@@ -1419,7 +1448,7 @@ class SNAPEligibilityGenerator(Generator):
                     # FLAGGED, NOT RESOLVED (see the Task 1 fix report): whether the
                     # 1-2-person minimum-benefit floor should apply here at all -- and
                     # whether `eligible_count` is the right basis for it -- under 7 CFR
-                    # 273.11(c)(2)/273.4(c)(3) for a size-reduced, non-categorically-linked
+                    # 273.11(c)(2)/273.11(c)(3) for a size-reduced, non-categorically-linked
                     # household is a real policy question this task does not resolve with
                     # confidence. Left as the plain drop-in rather than forcing a guess.
                     "monthly_allotment": (self._estimate_benefit(eligible_count, net_income) if is_eligible else None),
@@ -1429,21 +1458,22 @@ class SNAPEligibilityGenerator(Generator):
             expected_outcome=outcome,
             expected_answer=(
                 f"This household is {'ELIGIBLE' if is_eligible else 'INELIGIBLE'}. "
-                f"Under 7 CFR 273.4(c)(3), the {ineligible_count} ineligible member is excluded from "
-                f"household size for limit lookup ({total_members}→{eligible_count} persons), but their income "
-                f"counts in full. The household's full income of ${gross:,.2f} is tested against "
-                f"{eligible_count}-person limits."
+                f"Under 7 CFR 273.11(c)(3), the {ineligible_count} ineligible member is excluded from "
+                f"the household size used for the limit lookup ({total_members}→{eligible_count} persons). "
+                f"273.11(c)(3)(i) lets the State agency count all, or all but a pro rata share, of "
+                f"that member's income; this jurisdiction counts all of it, so the household's full "
+                f"income of ${gross:,.2f} is tested against {eligible_count}-person limits."
             ),
             rationale_trace=RationaleTrace(
                 steps=steps,
                 conclusion=(
                     f"{'ELIGIBLE' if is_eligible else 'INELIGIBLE'}. {reason} "
-                    f"(using {eligible_count}-person limits per 7 CFR 273.4(c)(3))"
+                    f"(using {eligible_count}-person limits per 7 CFR 273.11(c)(3))"
                 ),
                 policy_basis=[
                     PolicyCitation(
                         document="7 CFR Part 273",
-                        section="7 CFR 273.4(c)(3)",
+                        section="7 CFR 273.11(c)(3)",
                         year=self.fiscal_year,
                         url="https://www.ecfr.gov/current/title-7/part-273",
                     )

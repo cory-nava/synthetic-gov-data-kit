@@ -50,7 +50,7 @@ Two things this file is careful about:
 - The financial facts are read off the CASE, not recomputed. `household_size` for
   the limit lookup comes from `additional_context["eligible_member_count"]` when
   present (the mixed-immigration builder tests full income against a reduced
-  household size, per 7 CFR 273.4(c)(3)) and from `scenario.household_size`
+  household size, per 7 CFR 273.11(c)(3)) and from `scenario.household_size`
   otherwise. If a builder ever writes a scenario whose stated facts do not
   produce its own stated outcome, that is precisely the bug being hunted.
 - One case type is genuinely NOT decided by the financial waterfall:
@@ -96,8 +96,11 @@ def financial_facts(case: TestCase) -> dict[str, Any]:
     """
     context = case.scenario.additional_context or {}
     return {
-        # 7 CFR 273.4(c)(3): ineligible members leave the household size used for
-        # the limit lookup while their income still counts in full.
+        # 7 CFR 273.11(c)(3): an ineligible alien leaves the household size used for
+        # the limit lookup. Whether their income is counted in full or less a pro
+        # rata share is a state election under (c)(3)(i); the builder generates the
+        # count-all election, which is why full income is the right basis here.
+        # NOT 273.4(c), which is sponsor deeming -- a different mechanism.
         "household_size": context.get("eligible_member_count", case.scenario.household_size),
         "gross_income": case.scenario.monthly_gross_income,
         "net_income": case.scenario.monthly_net_income,
@@ -179,7 +182,7 @@ def stated_limit_household_size(case: TestCase) -> int:
     """The household size this case's own gross-limit lookup used.
 
     Same rule as `financial_facts`: `eligible_member_count` when the builder tested
-    full income against a reduced household size (7 CFR 273.4(c)(3)), else the
+    full income against a reduced household size (7 CFR 273.11(c)(3)), else the
     scenario's household size.
     """
     context = case.scenario.additional_context or {}
