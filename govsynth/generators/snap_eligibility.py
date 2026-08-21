@@ -211,6 +211,7 @@ class SNAPEligibilityGenerator(Generator):
             ("_build_homeless_case", self._build_homeless_case),
             ("_build_student_case", self._build_student_case),
             ("_build_boarder_case", self._build_boarder_case),
+            ("_build_self_employment_case", self._build_self_employment_case),
             ("_build_migrant_case", self._build_migrant_case),
             ("_build_mixed_immigration_case", self._build_mixed_immigration_case),
             ("_build_categorical_eligibility_case", self._build_categorical_eligibility_case),
@@ -797,6 +798,329 @@ class SNAPEligibilityGenerator(Generator):
             metadata={
                 "generator": "SNAPEligibilityGenerator",
                 "profile_strategy": "boarder_income_proration",
+                "state": self.state,
+                "fiscal_year": self.fiscal_year,
+            },
+        )
+
+    # Ordinary service businesses whose costs are actual and itemisable under
+    # 7 CFR 273.11(b)(1). Day care, boarders, foster-care boarders and farming are
+    # deliberately absent: each has its own cost-determination paragraph
+    # (273.11(b)(3)(i)-(iii), 273.11(a)(1)(iii) and (a)(2)(ii)) and every one of them
+    # routes through a STATE-set figure -- the TANF standard amount, a CACFP
+    # reimbursement rate, or a flat percentage that must be "stated in the State's
+    # SNAP manual". Generating those needs a sourced 53-jurisdiction table, which is
+    # the same reason the standard utility allowance is not generated here.
+    _SELF_EMPLOYMENT_ENTERPRISES = (
+        ("house-cleaning service", "cleaning supplies"),
+        ("lawn care and landscaping business", "seed, fertilizer and mower parts"),
+        ("mobile barber business", "clippers and sanitising supplies"),
+        ("handyman and small-repair business", "lumber, fasteners and tool parts"),
+        ("online resale business", "inventory purchased for resale"),
+        ("food cart", "ingredients and disposable serviceware"),
+    )
+
+    def _build_self_employment_case(self, rng: random.Random) -> TestCase:
+        """Build a self-employment net-income case (7 CFR 273.11(a), (b)).
+
+        Two independent traps, both arithmetic and both checkable against the
+        figures the scenario states:
+
+        1. The household's countable gross income is the NET self-employment
+           income -- gross receipts less the allowable cost of producing them,
+           averaged over the period the income is intended to cover
+           (7 CFR 273.11(a)(1)(i), (a)(2)(i)) -- and NOT the gross receipts.
+           Treating receipts as gross income overstates income by the entire
+           cost base, failing the gross test on a household that passes it.
+        2. Four expenses the scenario lists are not allowable costs of doing
+           business under 7 CFR 273.11(b)(2): a net loss from a previous period
+           (b)(2)(i), income tax set aside and commuting (b)(2)(ii), and
+           depreciation (b)(2)(iii). Deducting them understates income. The reg
+           supplies its own reason for (b)(2)(ii) -- those costs "are accounted
+           for by the 20 percent earned income deduction specified in
+           273.9(d)(2)" -- so a model that both deducts them and takes the
+           earned income deduction has subtracted the same money twice.
+
+        Only the actual-cost method is generated. 7 CFR 273.11(b)(3) offers
+        actual costs or a state-set standard and supplies no federal percentage
+        to fall back on, so actual costs are the only method that is identical
+        in all 53 jurisdictions.
+        """
+        fy_config = self.bbce_source.fy_config
+        hh_size = rng.randint(1, 4)
+
+        # Anchor the NET figure on the flip point rather than the gross limit: this
+        # shape's countable income is entirely earned, so in a raised-BBCE
+        # jurisdiction the gross test does not bind and sampling against it would
+        # collapse the label (see `_binding_gross_ceiling`).
+        ceiling = self._binding_gross_ceiling(
+            hh_size,
+            lambda gross: self.bbce_source.calculate_net_income(
+                gross_income=gross,
+                household_size=hh_size,
+                earned_income=gross,
+            ),
+        )
+        net_se_monthly = round(rng.uniform(ceiling * 0.80, ceiling * 1.15), 2)
+
+        enterprise, stock_label = self._SELF_EMPLOYMENT_ENTERPRISES[
+            rng.randrange(len(self._SELF_EMPLOYMENT_ENTERPRISES))
+        ]
+
+        # Allowable costs, each naming a clause of 273.11(b)(1). Monthly figures are
+        # the source of truth; the scenario reports 12-month totals so the rationale
+        # has to perform the averaging in (a)(1)(i) instead of being handed the answer.
+        allowable = {
+            f"{stock_label} (stock and raw material)": round(
+                net_se_monthly * rng.uniform(0.12, 0.28), 2
+            ),
+            "equipment principal payments": round(net_se_monthly * rng.uniform(0.05, 0.12), 2),
+            "business liability insurance premiums": round(
+                net_se_monthly * rng.uniform(0.03, 0.07), 2
+            ),
+            "taxes on income-producing property": round(
+                net_se_monthly * rng.uniform(0.02, 0.05), 2
+            ),
+        }
+        allowable_monthly = round(sum(allowable.values()), 2)
+        receipts_monthly = round(net_se_monthly + allowable_monthly, 2)
+
+        # Not allowable under (b)(2). Sized so that deducting them can actually move
+        # the determination -- a trap that cannot change the answer is decorative.
+        disallowed = {
+            "depreciation on equipment": round(net_se_monthly * rng.uniform(0.06, 0.14), 2),
+            "income tax set aside": round(net_se_monthly * rng.uniform(0.05, 0.10), 2),
+            "commuting between home and job sites": round(
+                net_se_monthly * rng.uniform(0.03, 0.08), 2
+            ),
+            "net loss carried over from the prior year": round(
+                net_se_monthly * rng.uniform(0.04, 0.09), 2
+            ),
+        }
+        disallowed_monthly = round(sum(disallowed.values()), 2)
+
+        months = 12
+        receipts_annual = round(receipts_monthly * months, 2)
+        allowable_annual = round(allowable_monthly * months, 2)
+        disallowed_annual = round(disallowed_monthly * months, 2)
+
+        # Drawn once and used for both the determination and the scenario -- see the
+        # note in `_build_boarder_case`.
+        liquid_assets = round(rng.uniform(0, 1500), -2)
+
+        net_income = self.bbce_source.calculate_net_income(
+            gross_income=net_se_monthly,
+            household_size=hh_size,
+            earned_income=net_se_monthly,
+        )
+        is_eligible, reason = self.bbce_source.is_eligible(
+            household_size=hh_size,
+            gross_income=net_se_monthly,
+            net_income=net_income,
+            liquid_assets=liquid_assets,
+        )
+
+        gross_limit = self._gross_limit(hh_size)
+        limits = self.bbce_source.thresholds().by_household_size(hh_size)
+        earned_deduction = round(net_se_monthly * 0.20, 2)
+
+        uid = build_short_uid(rng)
+        outcome = "eligible" if is_eligible else "ineligible"
+        case_id = (
+            f"snap.{self.state.lower()}.eligibility."
+            f"self_employment_cost_of_doing_business.{outcome}.hh{hh_size}.{uid}"
+        )
+
+        allowable_annual_items = {k: round(v * months, 2) for k, v in allowable.items()}
+        disallowed_annual_items = {k: round(v * months, 2) for k, v in disallowed.items()}
+        allowable_lines = "; ".join(f"{k} ${v:,.2f}" for k, v in allowable_annual_items.items())
+        disallowed_lines = "; ".join(f"{k} ${v:,.2f}" for k, v in disallowed_annual_items.items())
+
+        steps = [
+            ReasoningStep(
+                step_number=1,
+                title=(
+                    "Separate allowable costs of doing business from non-allowable items "
+                    "(7 CFR 273.11(b))"
+                ),
+                rule_applied="7 CFR 273.11(b)(1), (b)(2)",
+                inputs={
+                    "allowable_costs_annual": allowable_annual_items,
+                    "non_allowable_items_annual": disallowed_annual_items,
+                },
+                computation=(
+                    f"Allowable under 7 CFR 273.11(b)(1) — identifiable costs of labor, stock, "
+                    f"raw material, seed and fertilizer, payments on the principal of the purchase "
+                    f"price of income-producing capital assets and equipment, interest paid to "
+                    f"purchase income-producing property, insurance premiums, and taxes paid on "
+                    f"income-producing property: {allowable_lines}. Total allowable: "
+                    f"${allowable_annual:,.2f} over {months} months. "
+                    f"NOT allowable under 7 CFR 273.11(b)(2): {disallowed_lines}. A net loss from a "
+                    f"previous period is barred by (b)(2)(i); income tax set aside and commuting to "
+                    f"and from work are barred by (b)(2)(ii) because those expenses \"are accounted "
+                    f"for by the 20 percent earned income deduction specified in §273.9(d)(2)\"; "
+                    f"depreciation is barred by (b)(2)(iii). Total excluded from the cost offset: "
+                    f"${disallowed_annual:,.2f}."
+                ),
+                result=(
+                    f"Allowable cost of producing self-employment income: ${allowable_annual:,.2f} "
+                    f"over {months} months. ${disallowed_annual:,.2f} of claimed expenses is not "
+                    f"deductible."
+                ),
+                is_determinative=False,
+            ),
+            ReasoningStep(
+                step_number=2,
+                title=(
+                    "Average self-employment income over the period it is intended to cover "
+                    "(7 CFR 273.11(a))"
+                ),
+                rule_applied="7 CFR 273.11(a)(1)(i), (a)(2)(i)",
+                inputs={
+                    "gross_receipts_annual": receipts_annual,
+                    "allowable_costs_annual_total": allowable_annual,
+                    "months_averaged": months,
+                },
+                computation=(
+                    f"Under 7 CFR 273.11(a)(2)(i), add gross self-employment income, exclude the "
+                    f"cost of producing it, then divide by the number of months over which the "
+                    f"income is averaged: (${receipts_annual:,.2f} − ${allowable_annual:,.2f}) ÷ "
+                    f"{months} = ${net_se_monthly:,.2f} per month. This is the monthly net "
+                    f"self-employment income and it is the household's countable income — the "
+                    f"${receipts_annual:,.2f} in gross receipts is not."
+                ),
+                result=f"Monthly net self-employment income: ${net_se_monthly:,.2f}",
+                is_determinative=False,
+            ),
+            ReasoningStep(
+                step_number=3,
+                title="Gross income test",
+                rule_applied="7 CFR 273.9(a)(1)",
+                inputs={
+                    "countable_gross_income": net_se_monthly,
+                    "gross_limit": gross_limit,
+                    "household_size": hh_size,
+                },
+                computation=(
+                    f"${net_se_monthly:,.2f} "
+                    f"{'<=' if net_se_monthly <= gross_limit else '>'} "
+                    f"${gross_limit:,.2f} ({self._gross_basis(hh_size)})"
+                ),
+                result="PASS" if net_se_monthly <= gross_limit else "FAIL",
+                is_determinative=net_se_monthly > gross_limit,
+            ),
+            ReasoningStep(
+                step_number=4,
+                title="Net income test — net self-employment income is earned income",
+                rule_applied="7 CFR 273.9(d)(2), 273.11(a)(2)(i)",
+                inputs={
+                    "earned_income": net_se_monthly,
+                    "earned_income_deduction": earned_deduction,
+                    "net_income": round(net_income, 2),
+                    "net_limit": limits.net_monthly,
+                },
+                computation=(
+                    f"Per 7 CFR 273.11(a)(2)(i) the monthly net self-employment income is added to "
+                    f"any other earned income to determine total monthly earned income, so the 20 "
+                    f"percent earned income deduction applies: ${net_se_monthly:,.2f} × 20% = "
+                    f"${earned_deduction:,.2f}. After the standard and remaining deductions, net "
+                    f"income is ${net_income:,.2f} "
+                    f"{'<=' if net_income <= limits.net_monthly else '>'} "
+                    f"${limits.net_monthly:,.2f} (100% FPL, {hh_size}-person HH)."
+                ),
+                result="PASS" if net_income <= limits.net_monthly else "FAIL",
+                is_determinative=net_se_monthly <= gross_limit and net_income > limits.net_monthly,
+                note=(
+                    "The non-allowable items in step 1 are not subtracted here either. Deducting "
+                    "them and then taking the 20 percent earned income deduction would subtract "
+                    "the same money twice — which is the reason 273.11(b)(2)(ii) gives for "
+                    "barring them."
+                ),
+            ),
+        ]
+
+        return TestCase(
+            case_id=case_id,
+            program=Program.SNAP.value,
+            jurisdiction=f"us.{self.state.lower()}",
+            task_type=TaskType.ELIGIBILITY,
+            difficulty=Difficulty.ADVERSARIAL,
+            scenario=ScenarioBlock(
+                summary=(
+                    f"A {hh_size}-person household in {self.state} whose only income is a "
+                    f"self-employed {enterprise}. Over the last {months} months the business took "
+                    f"in ${receipts_annual:,.2f} in gross receipts. Business expenses over the same "
+                    f"period were: {allowable_lines}. The household also reports "
+                    f"{disallowed_lines}. Countable liquid assets are ${liquid_assets:,.0f}. "
+                    f"No household member is elderly or disabled."
+                ),
+                household_size=hh_size,
+                monthly_gross_income=net_se_monthly,
+                # Stated, not left to be recomputed: the countable income here is
+                # entirely EARNED (7 CFR 273.11(a)(2)(i)), so it carries the 20 percent
+                # earned income deduction. A consumer that re-derives net income from
+                # gross alone treats it as unearned, skips that deduction, and reads a
+                # net figure several hundred dollars too high.
+                monthly_net_income=round(net_income, 2),
+                liquid_assets=liquid_assets,
+                state=self.state,
+                additional_context={
+                    "threshold_type": "self_employment_cost_of_doing_business",
+                    "enterprise": enterprise,
+                    "months_averaged": months,
+                    "gross_receipts_annual": receipts_annual,
+                    "allowable_costs_annual": allowable_annual_items,
+                    "non_allowable_items_annual": disallowed_annual_items,
+                    "self_employed": True,
+                    "monthly_allotment": (
+                        self._estimate_benefit(hh_size, net_income) if is_eligible else None
+                    ),
+                },
+            ),
+            task=TaskBlock(instruction=_TASK_INSTRUCTION),
+            expected_outcome=outcome,
+            expected_answer=(
+                f"This household is {'ELIGIBLE' if is_eligible else 'INELIGIBLE'} for SNAP. "
+                f"Gross receipts of ${receipts_annual:,.2f} over {months} months less "
+                f"${allowable_annual:,.2f} in allowable costs of producing self-employment income "
+                f"(7 CFR 273.11(b)(1)), averaged over {months} months, gives countable monthly "
+                f"income of ${net_se_monthly:,.2f}. Depreciation, income tax set aside, commuting, "
+                f"and the prior-period net loss are not allowable costs of doing business "
+                f"(7 CFR 273.11(b)(2)). {reason}"
+            ),
+            rationale_trace=RationaleTrace(
+                steps=steps,
+                conclusion=(
+                    f"{'ELIGIBLE' if is_eligible else 'INELIGIBLE'}. Countable income is the net "
+                    f"self-employment income of ${net_se_monthly:,.2f} per month, not the "
+                    f"${receipts_monthly:,.2f} per month in gross receipts, and the "
+                    f"${disallowed_monthly:,.2f} per month of non-allowable items is excluded from "
+                    f"the cost offset under 7 CFR 273.11(b)(2)."
+                ),
+                policy_basis=[
+                    PolicyCitation(
+                        document="7 CFR Part 273",
+                        section="7 CFR 273.11(a), (b)",
+                        year=self.fiscal_year,
+                        url="https://www.ecfr.gov/current/title-7/part-273",
+                    ),
+                    PolicyCitation(
+                        document="7 CFR Part 273",
+                        section="7 CFR 273.9(d)(2)",
+                        year=self.fiscal_year,
+                        url="https://www.ecfr.gov/current/title-7/part-273",
+                    ),
+                ],
+            ),
+            variation_tags=["self_employment_cost_of_doing_business"],
+            source_citations=[
+                "7 CFR Part 273 (2025)",
+                f"USDA FNS SNAP Income and Resource Limits {fy_config.period_label}",
+            ],
+            seed=None,
+            metadata={
+                "generator": "SNAPEligibilityGenerator",
+                "profile_strategy": "self_employment_cost_of_doing_business",
                 "state": self.state,
                 "fiscal_year": self.fiscal_year,
             },

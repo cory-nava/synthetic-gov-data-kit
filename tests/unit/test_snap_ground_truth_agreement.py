@@ -613,10 +613,10 @@ def test_the_agreement_check_rejects_the_federal_limit_regression() -> None:
 
 
 def test_jurisdictions_without_a_raised_gross_limit_skip_the_bbce_expanded_case() -> None:
-    """A jurisdiction with no band above 130% FPL generates the other six types.
+    """A jurisdiction with no band above 130% FPL generates the other seven types.
 
     It must NOT borrow another jurisdiction's parameters to manufacture the
-    seventh -- see `SNAPEligibilityGenerator.supports_bbce_expanded_income`.
+    eighth -- see `SNAPEligibilityGenerator.supports_bbce_expanded_income`.
     """
     non_bbce_or_flat = [
         code
@@ -630,7 +630,7 @@ def test_jurisdictions_without_a_raised_gross_limit_skip_the_bbce_expanded_case(
         generator = SNAPEligibilityGenerator(fiscal_year=FISCAL_YEAR, state=code)
         cases = generator.generate(n=40, profile_strategy="edge_saturated", seed=20260810)
         assert not [c for c in cases if "bbce_expanded_gross_limit" in c.variation_tags], code
-        assert len(generator._available_special_population_builders()) == 6, code
+        assert len(generator._available_special_population_builders()) == 7, code
         with pytest.raises(ValueError, match="cannot support a BBCE expanded-gross-limit case"):
             generator._build_bbce_expanded_income_case(random.Random(0))
 

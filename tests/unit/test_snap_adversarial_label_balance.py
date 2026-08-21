@@ -65,6 +65,12 @@ MUST_VARY = (
     "_build_homeless_case",
     "_build_migrant_case",
     "_build_mixed_immigration_case",
+    # Anchored on `_binding_gross_ceiling` from the day it was written, so it starts
+    # in the label-varying set rather than being pinned like `_build_boarder_case`.
+    # Its countable income is entirely earned self-employment income -- the one
+    # number a model has to derive rather than read -- so a collapsed label would
+    # make the case type answerable from the phrase "self-employed" alone.
+    "_build_self_employment_case",
 )
 MAX_MAJORITY_SHARE = 0.85
 
