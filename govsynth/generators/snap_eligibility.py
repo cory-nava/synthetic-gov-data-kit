@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Callable
+from typing import TypedDict
 
 from govsynth.fiscal_year import DEFAULT_SNAP_FY, FiscalYearConfig
 from govsynth.generators.base import Generator
@@ -44,6 +45,44 @@ _TASK_INSTRUCTION = (
 )
 
 
+class _FiveYearBar(TypedDict):
+    """The five-year-bar arm of a noncitizen case (8 U.S.C. 1613)."""
+
+    applies: bool
+    why: str
+
+
+class _NoncitizenCaseBase(TypedDict):
+    """One noncitizen status variant. See `_NONCITIZEN_STATUS_CASES`.
+
+    Spelled out as a TypedDict rather than left as a bare dict literal because
+    mypy --strict infers a heterogeneous literal as dict[str, object], which
+    makes every `spec["category_rule"]` an `object` and fails at the point it is
+    passed to `ReasoningStep(rule_applied=...)`.
+    """
+
+    key: str
+    phrase: str
+    category: str
+    category_eligible: bool
+    category_rule: str
+    category_why: str
+    # None for categories with no waiting period at all (Cuban/Haitian entrants,
+    # COFA citizens) and for statuses that are not eligible in the first place.
+    bar: _FiveYearBar | None
+
+
+class _NoncitizenCase(_NoncitizenCaseBase, total=False):
+    """`total=False` inheritance keeps `stale_reg_warning` genuinely optional.
+
+    typing.NotRequired would be cleaner but is 3.11+, and this package targets
+    3.10. Only the refugee and asylee cases set it -- they are the ones where
+    7 CFR 273.4(a)(6)(ii) still contradicts the governing statute.
+    """
+
+    stale_reg_warning: bool
+
+
 class SNAPEligibilityGenerator(Generator):
     """Generates SNAP eligibility determination test cases.
 
@@ -77,11 +116,11 @@ class SNAPEligibilityGenerator(Generator):
     misapply that specific rule, not because of any threshold distance. For a
     typical 'edge_saturated' run, roughly 20% of output is ADVERSARIAL.
 
-    Six of those seven builders apply to every jurisdiction. The seventh,
+    Eight of those nine builders apply to every jurisdiction. The ninth,
     _build_bbce_expanded_income_case, needs a gross-income band between the
     federal 130% FPL limit and a HIGHER state limit, which a jurisdiction that
     has not adopted BBCE (or adopted it at 130% FPL) does not have. Such a
-    jurisdiction generates the other six types instead -- see
+    jurisdiction generates the other eight types instead -- see
     `supports_bbce_expanded_income`. It never borrows another jurisdiction's
     parameters to manufacture the case.
     """
@@ -124,6 +163,7 @@ class SNAPEligibilityGenerator(Generator):
         n: int,
         profile_strategy: str = "edge_saturated",
         seed: int | None = None,
+        special_fraction: float = 0.20,
     ) -> list[TestCase]:
         """Generate n SNAP eligibility test cases.
 
@@ -135,6 +175,17 @@ class SNAPEligibilityGenerator(Generator):
             n: Number of cases to generate.
             profile_strategy: 'edge_saturated' | 'uniform' | 'realistic'
             seed: RNG seed for reproducibility.
+            special_fraction: share of cases drawn from the special-population
+                builders under 'edge_saturated'. Defaults to 0.20, which left
+                the ten threshold-boundary income variants holding 74% of a
+                13,760-record training set and only 12 distinct citation sets
+                across the whole corpus -- 80% of rendered targets opened with
+                the byte-identical line "Step 1: Check gross income limit". A
+                fine-tune on that corpus learned the dominant template so
+                strongly that held-out cases outside it degenerated into
+                repetition loops. Raise it to broaden the reasoning-path and
+                citation mix; the floor below still guarantees >= 1 case per
+                available builder regardless of this value.
 
         Returns:
             List of TestCase objects.
@@ -157,7 +208,9 @@ class SNAPEligibilityGenerator(Generator):
             return cases
 
         # edge_saturated: two-phase split
-        n_special = max(0, min(int(n * 0.20), n))
+        if not 0.0 <= special_fraction <= 1.0:
+            raise ValueError(f"special_fraction must be in [0.0, 1.0], got {special_fraction!r}")
+        n_special = max(0, min(int(n * special_fraction), n))
         # Guarantee >= 1 per available type once n is at least that many. Keyed on
         # the AVAILABLE builder count, not a hardcoded 7: a jurisdiction that
         # cannot support the BBCE expanded-income case has six types, and a
@@ -188,7 +241,7 @@ class SNAPEligibilityGenerator(Generator):
     def _special_population_builders(
         self,
     ) -> list[tuple[str, Callable[[random.Random], TestCase]]]:
-        """Name/callable pairs for the 7 special-population builders.
+        """Name/callable pairs for the 9 special-population builders.
 
         Extracted so tests can inspect the pairing (name matches the callable's
         __name__) without invoking any builder.
@@ -197,8 +250,10 @@ class SNAPEligibilityGenerator(Generator):
             ("_build_homeless_case", self._build_homeless_case),
             ("_build_student_case", self._build_student_case),
             ("_build_boarder_case", self._build_boarder_case),
+            ("_build_self_employment_case", self._build_self_employment_case),
             ("_build_migrant_case", self._build_migrant_case),
             ("_build_mixed_immigration_case", self._build_mixed_immigration_case),
+            ("_build_noncitizen_status_case", self._build_noncitizen_status_case),
             ("_build_categorical_eligibility_case", self._build_categorical_eligibility_case),
             ("_build_bbce_expanded_income_case", self._build_bbce_expanded_income_case),
         ]
@@ -788,6 +843,908 @@ class SNAPEligibilityGenerator(Generator):
             },
         )
 
+    # Ordinary service businesses whose costs are actual and itemisable under
+    # 7 CFR 273.11(b)(1). Day care, boarders, foster-care boarders and farming are
+    # deliberately absent: each has its own cost-determination paragraph
+    # (273.11(b)(3)(i)-(iii), 273.11(a)(1)(iii) and (a)(2)(ii)) and every one of them
+    # routes through a STATE-set figure -- the TANF standard amount, a CACFP
+    # reimbursement rate, or a flat percentage that must be "stated in the State's
+    # SNAP manual". Generating those needs a sourced 53-jurisdiction table, which is
+    # the same reason the standard utility allowance is not generated here.
+    _SELF_EMPLOYMENT_ENTERPRISES = (
+        ("house-cleaning service", "cleaning supplies"),
+        ("lawn care and landscaping business", "seed, fertilizer and mower parts"),
+        ("mobile barber business", "clippers and sanitising supplies"),
+        ("handyman and small-repair business", "lumber, fasteners and tool parts"),
+        ("online resale business", "inventory purchased for resale"),
+        ("food cart", "ingredients and disposable serviceware"),
+    )
+
+    def _build_self_employment_case(self, rng: random.Random) -> TestCase:
+        """Build a self-employment net-income case (7 CFR 273.11(a), (b)).
+
+        Two independent traps, both arithmetic and both checkable against the
+        figures the scenario states:
+
+        1. The household's countable gross income is the NET self-employment
+           income -- gross receipts less the allowable cost of producing them,
+           averaged over the period the income is intended to cover
+           (7 CFR 273.11(a)(1)(i), (a)(2)(i)) -- and NOT the gross receipts.
+           Treating receipts as gross income overstates income by the entire
+           cost base, failing the gross test on a household that passes it.
+        2. Four expenses the scenario lists are not allowable costs of doing
+           business under 7 CFR 273.11(b)(2): a net loss from a previous period
+           (b)(2)(i), income tax set aside and commuting (b)(2)(ii), and
+           depreciation (b)(2)(iii). Deducting them understates income. The reg
+           supplies its own reason for (b)(2)(ii) -- those costs "are accounted
+           for by the 20 percent earned income deduction specified in
+           273.9(d)(2)" -- so a model that both deducts them and takes the
+           earned income deduction has subtracted the same money twice.
+
+        Only the actual-cost method is generated. 7 CFR 273.11(b)(3) offers
+        actual costs or a state-set standard and supplies no federal percentage
+        to fall back on, so actual costs are the only method that is identical
+        in all 53 jurisdictions.
+        """
+        fy_config = self.bbce_source.fy_config
+        hh_size = rng.randint(1, 4)
+
+        # Anchor the NET figure on the flip point rather than the gross limit: this
+        # shape's countable income is entirely earned, so in a raised-BBCE
+        # jurisdiction the gross test does not bind and sampling against it would
+        # collapse the label (see `_binding_gross_ceiling`).
+        ceiling = self._binding_gross_ceiling(
+            hh_size,
+            lambda gross: self.bbce_source.calculate_net_income(
+                gross_income=gross,
+                household_size=hh_size,
+                earned_income=gross,
+            ),
+        )
+        net_se_monthly = round(rng.uniform(ceiling * 0.80, ceiling * 1.15), 2)
+
+        enterprise, stock_label = self._SELF_EMPLOYMENT_ENTERPRISES[
+            rng.randrange(len(self._SELF_EMPLOYMENT_ENTERPRISES))
+        ]
+
+        # Allowable costs, each naming a clause of 273.11(b)(1). Monthly figures are
+        # the source of truth; the scenario reports 12-month totals so the rationale
+        # has to perform the averaging in (a)(1)(i) instead of being handed the answer.
+        allowable = {
+            f"{stock_label} (stock and raw material)": round(net_se_monthly * rng.uniform(0.12, 0.28), 2),
+            "equipment principal payments": round(net_se_monthly * rng.uniform(0.05, 0.12), 2),
+            "business liability insurance premiums": round(net_se_monthly * rng.uniform(0.03, 0.07), 2),
+            "taxes on income-producing property": round(net_se_monthly * rng.uniform(0.02, 0.05), 2),
+        }
+        allowable_monthly = round(sum(allowable.values()), 2)
+        receipts_monthly = round(net_se_monthly + allowable_monthly, 2)
+
+        # Not allowable under (b)(2). Sized so that deducting them can actually move
+        # the determination -- a trap that cannot change the answer is decorative.
+        disallowed = {
+            "depreciation on equipment": round(net_se_monthly * rng.uniform(0.06, 0.14), 2),
+            "income tax set aside": round(net_se_monthly * rng.uniform(0.05, 0.10), 2),
+            "commuting between home and job sites": round(net_se_monthly * rng.uniform(0.03, 0.08), 2),
+            "net loss carried over from the prior year": round(net_se_monthly * rng.uniform(0.04, 0.09), 2),
+        }
+        disallowed_monthly = round(sum(disallowed.values()), 2)
+
+        months = 12
+        receipts_annual = round(receipts_monthly * months, 2)
+        allowable_annual = round(allowable_monthly * months, 2)
+        disallowed_annual = round(disallowed_monthly * months, 2)
+
+        # Drawn once and used for both the determination and the scenario -- see the
+        # note in `_build_boarder_case`.
+        liquid_assets = round(rng.uniform(0, 1500), -2)
+
+        net_income = self.bbce_source.calculate_net_income(
+            gross_income=net_se_monthly,
+            household_size=hh_size,
+            earned_income=net_se_monthly,
+        )
+        is_eligible, reason = self.bbce_source.is_eligible(
+            household_size=hh_size,
+            gross_income=net_se_monthly,
+            net_income=net_income,
+            liquid_assets=liquid_assets,
+        )
+
+        gross_limit = self._gross_limit(hh_size)
+        limits = self.bbce_source.thresholds().by_household_size(hh_size)
+        earned_deduction = round(net_se_monthly * 0.20, 2)
+
+        uid = build_short_uid(rng)
+        outcome = "eligible" if is_eligible else "ineligible"
+        case_id = (
+            f"snap.{self.state.lower()}.eligibility.self_employment_cost_of_doing_business.{outcome}.hh{hh_size}.{uid}"
+        )
+
+        allowable_annual_items = {k: round(v * months, 2) for k, v in allowable.items()}
+        disallowed_annual_items = {k: round(v * months, 2) for k, v in disallowed.items()}
+        allowable_lines = "; ".join(f"{k} ${v:,.2f}" for k, v in allowable_annual_items.items())
+        disallowed_lines = "; ".join(f"{k} ${v:,.2f}" for k, v in disallowed_annual_items.items())
+
+        steps = [
+            ReasoningStep(
+                step_number=1,
+                title=("Separate allowable costs of doing business from non-allowable items (7 CFR 273.11(b))"),
+                rule_applied="7 CFR 273.11(b)(1), (b)(2)",
+                inputs={
+                    "allowable_costs_annual": allowable_annual_items,
+                    "non_allowable_items_annual": disallowed_annual_items,
+                },
+                computation=(
+                    f"Allowable under 7 CFR 273.11(b)(1) — identifiable costs of labor, stock, "
+                    f"raw material, seed and fertilizer, payments on the principal of the purchase "
+                    f"price of income-producing capital assets and equipment, interest paid to "
+                    f"purchase income-producing property, insurance premiums, and taxes paid on "
+                    f"income-producing property: {allowable_lines}. Total allowable: "
+                    f"${allowable_annual:,.2f} over {months} months. "
+                    f"NOT allowable under 7 CFR 273.11(b)(2): {disallowed_lines}. A net loss from a "
+                    f"previous period is barred by (b)(2)(i); income tax set aside and commuting to "
+                    f'and from work are barred by (b)(2)(ii) because those expenses "are accounted '
+                    f'for by the 20 percent earned income deduction specified in §273.9(d)(2)"; '
+                    f"depreciation is barred by (b)(2)(iii). Total excluded from the cost offset: "
+                    f"${disallowed_annual:,.2f}."
+                ),
+                result=(
+                    f"Allowable cost of producing self-employment income: ${allowable_annual:,.2f} "
+                    f"over {months} months. ${disallowed_annual:,.2f} of claimed expenses is not "
+                    f"deductible."
+                ),
+                is_determinative=False,
+            ),
+            ReasoningStep(
+                step_number=2,
+                title=("Average self-employment income over the period it is intended to cover (7 CFR 273.11(a))"),
+                rule_applied="7 CFR 273.11(a)(1)(i), (a)(2)(i)",
+                inputs={
+                    "gross_receipts_annual": receipts_annual,
+                    "allowable_costs_annual_total": allowable_annual,
+                    "months_averaged": months,
+                },
+                computation=(
+                    f"Under 7 CFR 273.11(a)(2)(i), add gross self-employment income, exclude the "
+                    f"cost of producing it, then divide by the number of months over which the "
+                    f"income is averaged: (${receipts_annual:,.2f} − ${allowable_annual:,.2f}) ÷ "
+                    f"{months} = ${net_se_monthly:,.2f} per month. This is the monthly net "
+                    f"self-employment income and it is the household's countable income — the "
+                    f"${receipts_annual:,.2f} in gross receipts is not."
+                ),
+                result=f"Monthly net self-employment income: ${net_se_monthly:,.2f}",
+                is_determinative=False,
+            ),
+            ReasoningStep(
+                step_number=3,
+                title="Gross income test",
+                rule_applied="7 CFR 273.9(a)(1)",
+                inputs={
+                    "countable_gross_income": net_se_monthly,
+                    "gross_limit": gross_limit,
+                    "household_size": hh_size,
+                },
+                computation=(
+                    f"${net_se_monthly:,.2f} "
+                    f"{'<=' if net_se_monthly <= gross_limit else '>'} "
+                    f"${gross_limit:,.2f} ({self._gross_basis(hh_size)})"
+                ),
+                result="PASS" if net_se_monthly <= gross_limit else "FAIL",
+                is_determinative=net_se_monthly > gross_limit,
+            ),
+            ReasoningStep(
+                step_number=4,
+                title="Net income test — net self-employment income is earned income",
+                rule_applied="7 CFR 273.9(d)(2), 273.11(a)(2)(i)",
+                inputs={
+                    "earned_income": net_se_monthly,
+                    "earned_income_deduction": earned_deduction,
+                    "net_income": round(net_income, 2),
+                    "net_limit": limits.net_monthly,
+                },
+                computation=(
+                    f"Per 7 CFR 273.11(a)(2)(i) the monthly net self-employment income is added to "
+                    f"any other earned income to determine total monthly earned income, so the 20 "
+                    f"percent earned income deduction applies: ${net_se_monthly:,.2f} × 20% = "
+                    f"${earned_deduction:,.2f}. After the standard and remaining deductions, net "
+                    f"income is ${net_income:,.2f} "
+                    f"{'<=' if net_income <= limits.net_monthly else '>'} "
+                    f"${limits.net_monthly:,.2f} (100% FPL, {hh_size}-person HH)."
+                ),
+                result="PASS" if net_income <= limits.net_monthly else "FAIL",
+                is_determinative=net_se_monthly <= gross_limit and net_income > limits.net_monthly,
+                note=(
+                    "The non-allowable items in step 1 are not subtracted here either. Deducting "
+                    "them and then taking the 20 percent earned income deduction would subtract "
+                    "the same money twice — which is the reason 273.11(b)(2)(ii) gives for "
+                    "barring them."
+                ),
+            ),
+        ]
+
+        return TestCase(
+            case_id=case_id,
+            program=Program.SNAP.value,
+            jurisdiction=f"us.{self.state.lower()}",
+            task_type=TaskType.ELIGIBILITY,
+            difficulty=Difficulty.ADVERSARIAL,
+            scenario=ScenarioBlock(
+                summary=(
+                    f"A {hh_size}-person household in {self.state} whose only income is a "
+                    f"self-employed {enterprise}. Over the last {months} months the business took "
+                    f"in ${receipts_annual:,.2f} in gross receipts. Business expenses over the same "
+                    f"period were: {allowable_lines}. The household also reports "
+                    f"{disallowed_lines}. Countable liquid assets are ${liquid_assets:,.0f}. "
+                    f"No household member is elderly or disabled."
+                ),
+                household_size=hh_size,
+                monthly_gross_income=net_se_monthly,
+                # Stated, not left to be recomputed: the countable income here is
+                # entirely EARNED (7 CFR 273.11(a)(2)(i)), so it carries the 20 percent
+                # earned income deduction. A consumer that re-derives net income from
+                # gross alone treats it as unearned, skips that deduction, and reads a
+                # net figure several hundred dollars too high.
+                monthly_net_income=round(net_income, 2),
+                liquid_assets=liquid_assets,
+                state=self.state,
+                additional_context={
+                    "threshold_type": "self_employment_cost_of_doing_business",
+                    "enterprise": enterprise,
+                    "months_averaged": months,
+                    "gross_receipts_annual": receipts_annual,
+                    "allowable_costs_annual": allowable_annual_items,
+                    "non_allowable_items_annual": disallowed_annual_items,
+                    "self_employed": True,
+                    "monthly_allotment": (self._estimate_benefit(hh_size, net_income) if is_eligible else None),
+                },
+            ),
+            task=TaskBlock(instruction=_TASK_INSTRUCTION),
+            expected_outcome=outcome,
+            expected_answer=(
+                f"This household is {'ELIGIBLE' if is_eligible else 'INELIGIBLE'} for SNAP. "
+                f"Gross receipts of ${receipts_annual:,.2f} over {months} months less "
+                f"${allowable_annual:,.2f} in allowable costs of producing self-employment income "
+                f"(7 CFR 273.11(b)(1)), averaged over {months} months, gives countable monthly "
+                f"income of ${net_se_monthly:,.2f}. Depreciation, income tax set aside, commuting, "
+                f"and the prior-period net loss are not allowable costs of doing business "
+                f"(7 CFR 273.11(b)(2)). {reason}"
+            ),
+            rationale_trace=RationaleTrace(
+                steps=steps,
+                conclusion=(
+                    f"{'ELIGIBLE' if is_eligible else 'INELIGIBLE'}. Countable income is the net "
+                    f"self-employment income of ${net_se_monthly:,.2f} per month, not the "
+                    f"${receipts_monthly:,.2f} per month in gross receipts, and the "
+                    f"${disallowed_monthly:,.2f} per month of non-allowable items is excluded from "
+                    f"the cost offset under 7 CFR 273.11(b)(2)."
+                ),
+                policy_basis=[
+                    PolicyCitation(
+                        document="7 CFR Part 273",
+                        section="7 CFR 273.11(a), (b)",
+                        year=self.fiscal_year,
+                        url="https://www.ecfr.gov/current/title-7/part-273",
+                    ),
+                    PolicyCitation(
+                        document="7 CFR Part 273",
+                        section="7 CFR 273.9(d)(2)",
+                        year=self.fiscal_year,
+                        url="https://www.ecfr.gov/current/title-7/part-273",
+                    ),
+                ],
+            ),
+            variation_tags=["self_employment_cost_of_doing_business"],
+            source_citations=[
+                "7 CFR Part 273 (2025)",
+                f"USDA FNS SNAP Income and Resource Limits {fy_config.period_label}",
+            ],
+            seed=None,
+            metadata={
+                "generator": "SNAPEligibilityGenerator",
+                "profile_strategy": "self_employment_cost_of_doing_business",
+                "state": self.state,
+                "fiscal_year": self.fiscal_year,
+            },
+        )
+
+    # Current law after P.L. 119-21 sec 10108, enacted 2025-07-04, which rewrote
+    # section 6(f) of the Food and Nutrition Act of 2008 (7 U.S.C. 2015(f)). FNS
+    # directs states to apply it to applications and redeterminations processed on
+    # or after 2025-11-01 -- two different dates, and conflating them is itself a
+    # ground-truth bug, so every case states the one that governs its own facts.
+    #
+    # Only these noncitizen categories remain eligible by status: lawful permanent
+    # residents, Cuban and Haitian entrants, and Compact of Free Association
+    # citizens, alongside U.S. citizens and U.S. non-citizen nationals. Refugees and
+    # asylees lost status-based eligibility.
+    #
+    # DELIBERATE TRAP: 7 CFR 273.4(a)(6)(ii) has NOT been amended. It still lists
+    # refugees under INA 207 and asylees under INA 208 as eligible and exempt from
+    # the five-year bar. A model reasoning from the CFR sounds authoritative and is
+    # wrong -- the statute controls -- and a model reasoning from pre-2025 training
+    # data reaches the same wrong answer. That is the single largest measured gap in
+    # this category (66% pooled across six models, n=204), so the cases below cite
+    # the statute and say what the stale regulation would have said.
+    #
+    # Whether an LPR is subject to the five-year bar (8 U.S.C. 1613) turns on the
+    # status held BEFORE adjusting. Per FNS implementation guidance, refugees,
+    # asylees, withheld-deportation, Cuban and Haitian entrants, Amerasians, COFA
+    # citizens, American Indians born abroad, Hmong and Highland Laotian tribal
+    # members, Iraqi and Afghan special immigrants, trafficking victims, and Afghan
+    # or Ukrainian nationals paroled inside specific windows are NOT subject.
+    # Conditional entrants, battered immigrants, and general one-year parolees ARE.
+    # Cases 3-8 below are matched pairs on exactly that distinction: same household,
+    # same income, same current status, opposite answers.
+    _NONCITIZEN_STATUS_CASES: tuple[_NoncitizenCase, ...] = (
+        {
+            "key": "refugee_not_adjusted",
+            "phrase": (
+                "was admitted to the United States as a refugee under section 207 of the "
+                "Immigration and Nationality Act and has not adjusted to lawful permanent "
+                "resident status"
+            ),
+            "category": "refugee",
+            "category_eligible": False,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Refugee is not one of the noncitizen categories eligible for SNAP. P.L. 119-21 "
+                "sec 10108 rewrote section 6(f) of the Food and Nutrition Act of 2008 and limited "
+                "eligibility to U.S. citizens, U.S. non-citizen nationals, lawful permanent "
+                "residents, Cuban and Haitian entrants, and citizens of the Compact of Free "
+                "Association states. Refugees and asylees lost status-based eligibility."
+            ),
+            "stale_reg_warning": True,
+            "bar": None,
+        },
+        {
+            "key": "asylee_not_adjusted",
+            "phrase": (
+                "was granted asylum under section 208 of the Immigration and Nationality Act "
+                "and has not adjusted to lawful permanent resident status"
+            ),
+            "category": "asylee",
+            "category_eligible": False,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Asylee is not one of the noncitizen categories eligible for SNAP. P.L. 119-21 "
+                "sec 10108 limited eligibility to U.S. citizens, U.S. non-citizen nationals, "
+                "lawful permanent residents, Cuban and Haitian entrants, and citizens of the "
+                "Compact of Free Association states."
+            ),
+            "stale_reg_warning": True,
+            "bar": None,
+        },
+        {
+            "key": "lpr_adjusted_from_refugee",
+            "phrase": (
+                "entered the United States as a refugee under section 207 of the INA and "
+                "adjusted to lawful permanent resident status 2 years ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "The five-year waiting period is keyed to the status held before adjusting to "
+                    "LPR. This applicant entered as a refugee, and a refugee who adjusts to LPR is "
+                    "NOT subject to the five-year waiting period, so the 2 years since adjustment "
+                    "does not matter."
+                ),
+            },
+        },
+        {
+            "key": "lpr_adjusted_from_asylee",
+            "phrase": (
+                "was granted asylum under section 208 of the INA and adjusted to lawful "
+                "permanent resident status 18 months ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "An asylee who adjusts to LPR is not subject to the five-year waiting period, "
+                    "so 18 months of LPR status is not a barrier."
+                ),
+            },
+        },
+        {
+            "key": "lpr_adjusted_from_trafficking_victim",
+            "phrase": (
+                "was certified as a victim of a severe form of trafficking in persons and "
+                "adjusted to lawful permanent resident status 1 year ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "A certified victim of a severe form of trafficking who adjusts to LPR is not "
+                    "subject to the five-year waiting period."
+                ),
+            },
+        },
+        {
+            "key": "lpr_adjusted_from_battered_immigrant",
+            "phrase": (
+                "held status as a battered non-citizen spouse with a petition pending and "
+                "adjusted to lawful permanent resident status 2 years ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": True,
+                "why": (
+                    "Unlike a refugee or asylee, a battered non-citizen who adjusts to LPR IS "
+                    "subject to the five-year waiting period. Only 2 of the required 5 years since "
+                    "obtaining qualified status have elapsed, and none of the exceptions apply: the "
+                    "applicant is over 18, has fewer than 40 qualifying work quarters, is not blind "
+                    "or disabled, was not lawfully residing in the U.S. and aged 65 or older on "
+                    "1996-08-22, and has no U.S. military connection."
+                ),
+            },
+        },
+        {
+            "key": "lpr_adjusted_from_conditional_entrant",
+            "phrase": (
+                "was granted conditional entry under section 203(a)(7) of the INA as in effect "
+                "before 1980-04-01 and adjusted to lawful permanent resident status 3 years ago"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": True,
+                "why": (
+                    "A conditional entrant who adjusts to LPR IS subject to the five-year waiting "
+                    "period -- this is the distinction from a refugee or asylee, who is not. Only 3 "
+                    "of the required 5 years have elapsed and no exception applies."
+                ),
+            },
+        },
+        {
+            "key": "lpr_recent_no_exemption",
+            "phrase": (
+                "obtained lawful permanent resident status 3 years ago through a family-based "
+                "petition, with no prior humanitarian immigration status"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": True,
+                "why": (
+                    "An LPR is eligible only after a five-year waiting period that begins on the "
+                    "date qualified-immigrant status was obtained. Only 3 of the 5 years have "
+                    "elapsed, and no exception applies: the applicant is over 18, has fewer than 40 "
+                    "qualifying work quarters, is not blind or disabled, was not lawfully residing "
+                    "in the U.S. and aged 65 or older on 1996-08-22, and has no U.S. military "
+                    "connection."
+                ),
+            },
+        },
+        {
+            "key": "lpr_recent_forty_quarters",
+            "phrase": (
+                "obtained lawful permanent resident status 3 years ago and has been credited "
+                "with 42 qualifying work quarters under the Social Security Act"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "Only 3 of the 5 years have elapsed, but an LPR credited with 40 or more "
+                    "qualifying work quarters is eligible with no waiting period. 42 quarters "
+                    "exceeds the 40 required, so the waiting period does not apply."
+                ),
+            },
+        },
+        {
+            "key": "lpr_recent_veteran",
+            "phrase": (
+                "obtained lawful permanent resident status 1 year ago and is an honorably "
+                "discharged veteran of the U.S. armed forces"
+            ),
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "An LPR with a U.S. military connection -- active duty other than National "
+                    "Guard, or an honorable discharge not on account of immigration status -- is "
+                    "eligible with no waiting period, so 1 year of LPR status is not a barrier. A "
+                    "discharge 'under honorable conditions' would NOT meet this requirement; this "
+                    "applicant's discharge was honorable."
+                ),
+            },
+        },
+        {
+            "key": "lpr_beyond_five_years",
+            "phrase": "has held lawful permanent resident status for 8 years",
+            "category": "lawful permanent resident",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Lawful permanent resident is an eligible category under section 6(f) of the "
+                "Food and Nutrition Act of 2008 as amended by P.L. 119-21 sec 10108."
+            ),
+            "bar": {
+                "applies": False,
+                "why": (
+                    "8 years of qualified-immigrant status exceeds the five-year waiting period, so "
+                    "no exception is needed."
+                ),
+            },
+        },
+        {
+            "key": "cuban_haitian_entrant",
+            "phrase": (
+                "is a Cuban or Haitian entrant under section 501(e) of the Refugee Education "
+                "Assistance Act of 1980, admitted 2 years ago"
+            ),
+            "category": "Cuban or Haitian entrant",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Cuban and Haitian entrants are one of the three noncitizen categories that "
+                "P.L. 119-21 sec 10108 left eligible for SNAP."
+            ),
+            "bar": None,
+        },
+        {
+            "key": "cofa_citizen",
+            "phrase": (
+                "is a citizen of the Federated States of Micronesia lawfully residing in the "
+                "United States under section 141 of the Compact of Free Association, having "
+                "arrived 1 year ago"
+            ),
+            "category": "Compact of Free Association citizen",
+            "category_eligible": True,
+            "category_rule": "7 U.S.C. 2015(f), as amended by P.L. 119-21 sec 10108",
+            "category_why": (
+                "Citizens of the Federated States of Micronesia, the Republic of the Marshall "
+                "Islands and the Republic of Palau lawfully residing in the U.S. under the "
+                "Compacts of Free Association are one of the three noncitizen categories that "
+                "P.L. 119-21 sec 10108 left eligible for SNAP."
+            ),
+            "bar": None,
+        },
+    )
+
+    def _build_noncitizen_status_case(self, rng: random.Random) -> TestCase:
+        """Build a noncitizen status/five-year-bar case (7 U.S.C. 2015(f); 8 U.S.C. 1613).
+
+        Citizenship and noncitizenship status was the weakest of the four measured
+        QC error elements -- 66% pooled across six models over n=204 -- and the
+        generator produced nothing for it beyond a single coarse mixed-status case.
+
+        Every case is a one-person household with income comfortably inside both
+        income limits, so the determination turns entirely on status. That mirrors
+        `_build_student_case`: the point is that a non-financial rule decides the
+        case before the income test is reached, and the income is stated so a model
+        that reaches for it can be seen doing so.
+
+        Two things make this hard in a way that is not answerable from the case
+        type name:
+
+        - The governing law changed on 2025-07-04 and 7 CFR 273.4(a)(6)(ii) still
+          contradicts it, so both a model citing the current CFR and a model
+          reasoning from pre-2025 knowledge get refugee and asylee cases wrong.
+        - Whether an LPR faces the five-year bar depends on the status held BEFORE
+          adjusting, not on the current status or the elapsed time. Refugee-to-LPR
+          and battered-immigrant-to-LPR are identical on the face of the record --
+          both are LPRs, both adjusted within the last five years -- and get
+          opposite answers.
+
+        Single-person households are deliberate: an ineligible member inside a
+        larger household raises the income-counting election in 7 CFR
+        273.11(c)(3), which `_build_mixed_immigration_case` already covers. Keeping
+        the two apart stops this builder from silently generating a second, weaker
+        version of that case.
+        """
+        fy_config = self.bbce_source.fy_config
+        hh_size = 1
+        spec = self._NONCITIZEN_STATUS_CASES[rng.randrange(len(self._NONCITIZEN_STATUS_CASES))]
+
+        bar = spec["bar"]
+        bar_blocks = bool(bar and bar["applies"])
+        is_eligible = bool(spec["category_eligible"]) and not bar_blocks
+
+        # Income placed well inside the flip point so the financial tests always pass
+        # and status is the only thing deciding the case. Anchored on the binding
+        # ceiling rather than the gross limit for the usual reason: in a raised-BBCE
+        # jurisdiction the gross limit does not bind, so a fraction of it is not
+        # reliably inside the net limit (see `_binding_gross_ceiling`).
+        ceiling = self._binding_gross_ceiling(
+            hh_size,
+            lambda gross: self.bbce_source.calculate_net_income(
+                gross_income=gross,
+                household_size=hh_size,
+                earned_income=gross,
+            ),
+        )
+        gross = round(ceiling * rng.uniform(0.40, 0.75), 2)
+        liquid_assets = round(rng.uniform(0, 1200), -2)
+
+        net_income = self.bbce_source.calculate_net_income(
+            gross_income=gross,
+            household_size=hh_size,
+            earned_income=gross,
+        )
+        gross_limit = self._gross_limit(hh_size)
+        limits = self.bbce_source.thresholds().by_household_size(hh_size)
+
+        uid = build_short_uid(rng)
+        outcome = "eligible" if is_eligible else "ineligible"
+        case_id = f"snap.{self.state.lower()}.eligibility.noncitizen_status_{spec['key']}.{outcome}.hh{hh_size}.{uid}"
+
+        steps = [
+            ReasoningStep(
+                step_number=1,
+                title="Determine whether the applicant's immigration status is an eligible category",
+                rule_applied=spec["category_rule"],
+                inputs={
+                    "claimed_status": spec["category"],
+                    "eligible_categories": [
+                        "U.S. citizen",
+                        "U.S. non-citizen national",
+                        "lawful permanent resident",
+                        "Cuban or Haitian entrant",
+                        "Compact of Free Association citizen",
+                    ],
+                    "governing_law_effective": "2025-07-04",
+                    "state_implementation_date": "2025-11-01",
+                },
+                computation=spec["category_why"],
+                result=(
+                    f"PASS — {spec['category']} is an eligible category"
+                    if spec["category_eligible"]
+                    else f"INELIGIBLE — {spec['category']} is not an eligible category"
+                ),
+                is_determinative=not spec["category_eligible"],
+                note=(
+                    "7 CFR 273.4(a)(6)(ii) has not been amended to match and still lists refugees "
+                    "under INA 207 and asylees under INA 208 as eligible and exempt from the "
+                    "five-year bar. The statute controls: the regulation is stale, not an "
+                    "alternative reading."
+                    if spec.get("stale_reg_warning")
+                    else None
+                ),
+            )
+        ]
+
+        if spec["category_eligible"] and bar is not None:
+            steps.append(
+                ReasoningStep(
+                    step_number=2,
+                    title="Apply the five-year waiting period for lawful permanent residents",
+                    rule_applied="8 U.S.C. 1613; 7 U.S.C. 2015(f)",
+                    inputs={
+                        "status_before_adjusting_to_lpr": spec["key"],
+                        "exceptions_checked": [
+                            "under_age_18",
+                            "40_qualifying_quarters",
+                            "blind_or_disabled",
+                            "lawfully_residing_and_65_on_1996_08_22",
+                            "us_military_connection",
+                        ],
+                    },
+                    computation=bar["why"],
+                    result=(
+                        "INELIGIBLE — five-year waiting period not met and no exception applies"
+                        if bar["applies"]
+                        else "PASS — five-year waiting period does not bar this applicant"
+                    ),
+                    is_determinative=bar["applies"],
+                )
+            )
+
+        if is_eligible:
+            steps.append(
+                ReasoningStep(
+                    step_number=len(steps) + 1,
+                    title="Gross income test",
+                    rule_applied="7 CFR 273.9(a)(1)",
+                    inputs={
+                        "gross_income": gross,
+                        "gross_limit": gross_limit,
+                        "household_size": hh_size,
+                    },
+                    computation=(
+                        f"${gross:,.2f} "
+                        f"{'<=' if gross <= gross_limit else '>'} "
+                        f"${gross_limit:,.2f} ({self._gross_basis(hh_size)})"
+                    ),
+                    result="PASS" if gross <= gross_limit else "FAIL",
+                    is_determinative=False,
+                )
+            )
+            steps.append(
+                ReasoningStep(
+                    step_number=len(steps) + 1,
+                    title="Net income test",
+                    rule_applied="7 CFR 273.9(a)(2)",
+                    inputs={
+                        "net_income": round(net_income, 2),
+                        "net_limit": limits.net_monthly,
+                    },
+                    computation=(
+                        f"${net_income:,.2f} "
+                        f"{'<=' if net_income <= limits.net_monthly else '>'} "
+                        f"${limits.net_monthly:,.2f} (100% FPL, {hh_size}-person HH)"
+                    ),
+                    result="PASS" if net_income <= limits.net_monthly else "FAIL",
+                    is_determinative=False,
+                )
+            )
+
+        else:
+            # Every case needs a second step (TestCase requires two) and, more to the
+            # point, a denial on status should show what the income test WOULD have
+            # said -- otherwise a reader cannot tell whether status decided the case
+            # or the household simply had too much income. Stating the governing
+            # limit here also puts these cases under the same stated-limit gate as
+            # every financial case.
+            steps.append(
+                ReasoningStep(
+                    step_number=len(steps) + 1,
+                    title="Income test not reached",
+                    rule_applied="7 CFR 273.9(a)(1)",
+                    inputs={
+                        "gross_income": gross,
+                        "gross_limit": gross_limit,
+                        "household_size": hh_size,
+                    },
+                    computation=(
+                        f"Not reached. The applicant is ineligible on "
+                        f"{'the five-year waiting period' if bar_blocks else 'immigration status category'} "
+                        f"before any income test applies. For completeness, gross income of "
+                        f"${gross:,.2f} is within the ${gross_limit:,.2f} limit "
+                        f"({self._gross_basis(hh_size)}), so income is not what denies this case."
+                    ),
+                    result="NOT REACHED — denial is on status, not income",
+                    is_determinative=False,
+                )
+            )
+
+        if is_eligible:
+            answer_tail = (
+                f"Income of ${gross:,.2f} is within the ${gross_limit:,.2f} gross limit "
+                f"({self._gross_basis(hh_size)}) and net income of ${net_income:,.2f} is within the "
+                f"${limits.net_monthly:,.2f} net limit."
+            )
+        elif not spec["category_eligible"]:
+            answer_tail = (
+                f"The income test is not reached: status decides the case. Income of "
+                f"${gross:,.2f} would have been within the ${gross_limit:,.2f} gross limit."
+            )
+        else:
+            answer_tail = (
+                f"The income test is not reached: the five-year waiting period decides the case. "
+                f"Income of ${gross:,.2f} would have been within the ${gross_limit:,.2f} gross limit."
+            )
+
+        return TestCase(
+            case_id=case_id,
+            program=Program.SNAP.value,
+            jurisdiction=f"us.{self.state.lower()}",
+            task_type=TaskType.ELIGIBILITY,
+            difficulty=Difficulty.ADVERSARIAL,
+            scenario=ScenarioBlock(
+                summary=(
+                    f"A single applicant in {self.state} applying for SNAP in November 2025 or "
+                    f"later. The applicant {spec['phrase']}. Monthly gross income is "
+                    f"${gross:,.2f}, all from wages, and countable liquid assets are "
+                    f"${liquid_assets:,.0f}. The applicant is over 18, is not blind or disabled, "
+                    f"and is not elderly."
+                ),
+                household_size=hh_size,
+                monthly_gross_income=gross,
+                monthly_net_income=round(net_income, 2),
+                liquid_assets=liquid_assets,
+                state=self.state,
+                additional_context={
+                    "threshold_type": "noncitizen_status_eligibility",
+                    "noncitizen_case": spec["key"],
+                    "claimed_status": spec["category"],
+                    "status_category_eligible": bool(spec["category_eligible"]),
+                    "five_year_bar_applies": bar_blocks,
+                    "governing_law": "P.L. 119-21 sec 10108 (2025-07-04)",
+                    "monthly_allotment": (self._estimate_benefit(hh_size, net_income) if is_eligible else None),
+                },
+            ),
+            task=TaskBlock(instruction=_TASK_INSTRUCTION),
+            expected_outcome=outcome,
+            expected_answer=(
+                f"This applicant is {'ELIGIBLE' if is_eligible else 'INELIGIBLE'} for SNAP. "
+                f"{spec['category_why']} "
+                + (f"{bar['why']} " if spec["category_eligible"] and bar is not None else "")
+                + answer_tail
+            ),
+            rationale_trace=RationaleTrace(
+                steps=steps,
+                conclusion=(
+                    f"{'ELIGIBLE' if is_eligible else 'INELIGIBLE'}. "
+                    + (
+                        f"{spec['category']} is not an eligible noncitizen category under "
+                        f"7 U.S.C. 2015(f) as amended by P.L. 119-21 sec 10108."
+                        if not spec["category_eligible"]
+                        else (
+                            "The five-year waiting period under 8 U.S.C. 1613 is not met and no exception applies."
+                            if bar_blocks
+                            else "Status is eligible and both income tests pass."
+                        )
+                    )
+                ),
+                policy_basis=[
+                    PolicyCitation(
+                        document="Public Law 119-21",
+                        section="sec 10108 (amending 7 U.S.C. 2015(f))",
+                        year=2025,
+                        url="https://www.congress.gov/bill/119th-congress/house-bill/1/text",
+                    ),
+                    PolicyCitation(
+                        document="8 U.S.C. 1613",
+                        section="five-year limited eligibility for qualified aliens",
+                        year=self.fiscal_year,
+                        url="https://www.law.cornell.edu/uscode/text/8/1613",
+                    ),
+                ],
+            ),
+            variation_tags=["noncitizen_status_eligibility", spec["key"]],
+            source_citations=[
+                "P.L. 119-21 sec 10108 (2025-07-04)",
+                "USDA FNS, SNAP Implementation of the One Big Beautiful Bill Act of 2025 — Alien SNAP Eligibility",
+                f"USDA FNS SNAP Income and Resource Limits {fy_config.period_label}",
+            ],
+            seed=None,
+            metadata={
+                "generator": "SNAPEligibilityGenerator",
+                "profile_strategy": "noncitizen_status_eligibility",
+                "state": self.state,
+                "fiscal_year": self.fiscal_year,
+            },
+        )
+
     def _build_migrant_case(self, rng: random.Random) -> TestCase:
         """Build a migrant/seasonal worker income averaging case (7 CFR 273.10(c)(3))."""
         t = self.bbce_source.thresholds()
@@ -937,10 +1894,34 @@ class SNAPEligibilityGenerator(Generator):
         )
 
     def _build_mixed_immigration_case(self, rng: random.Random) -> TestCase:
-        """Build a mixed immigration status case (7 CFR 273.4(c)(3)).
+        """Build a mixed immigration status case (7 CFR 273.11(c)(3)).
 
-        Ineligible members are excluded from household SIZE for limit lookup,
-        but their income still counts in full.
+        Ineligible members are excluded from the household SIZE used for the limit
+        lookup, and this case counts their income in full.
+
+        Counting in full is a STATE ELECTION, not the only federal rule. 7 CFR
+        273.11(c)(3)(i) reads: the State agency "must count all or, at the
+        discretion of the State agency, all but a pro rata share, of the
+        ineligible alien's income and deductible expenses". A state may even
+        split the two tests -- counting all of the income for the gross income
+        test while counting all but a pro rata share for the net income test and
+        the benefit level. This builder generates the count-all election and says
+        so, rather than asserting a federal rule that does not exist.
+
+        The election is only available here because the ineligible member is a
+        NON-QUALIFIED alien. 273.11(c)(3)(i) does not apply to an alien in the
+        (A)-(G) list -- LPRs, asylees under INA 208, refugees under INA 207,
+        parolees under 212(d)(5), withheld-deportation, certain aged/blind/
+        disabled, and special agricultural workers. For those, (c)(3)(ii) gives
+        the state a different pair of options and full counting is not one of
+        them, so a case whose ineligible member is an LPR inside the five-year
+        bar cannot use this shape.
+
+        Do not cite 7 CFR 273.4(c) for any of this: that paragraph is SPONSOR
+        DEEMING, a different mechanism that attributes a sponsor's income to the
+        sponsored alien. 273.11(c)(3)(v) points the other way and forbids
+        counting the sponsor's income when determining an ineligible sponsored
+        alien's own income.
         """
         t = self.bbce_source.thresholds()
         fy_config = self.bbce_source.fy_config
@@ -995,20 +1976,25 @@ class SNAPEligibilityGenerator(Generator):
         steps = [
             ReasoningStep(
                 step_number=1,
-                title="Identify household composition — mixed immigration status (7 CFR 273.4(c)(3))",
-                rule_applied="7 CFR 273.4(c)(3)",
+                title="Identify household composition — mixed immigration status (7 CFR 273.11(c)(3))",
+                rule_applied="7 CFR 273.11(c)(3)",
                 inputs={
                     "total_members": total_members,
                     "ineligible_members": ineligible_count,
                     "eligible_members": eligible_count,
+                    "income_election": "count_all",
                 },
                 computation=(
                     f"Total household members: {total_members}. Ineligible (non-qualified "
-                    f"alien) members: {ineligible_count}. Under 7 CFR 273.4(c)(3), ineligible "
-                    f"members are excluded from household size for limit lookup. "
+                    f"alien) members: {ineligible_count}. Under 7 CFR 273.11(c)(3), an ineligible "
+                    f"alien is excluded from the household size used for the limit lookup. "
                     f"HH size for limit lookup: {total_members} − {ineligible_count} = {eligible_count}. "
-                    f"NOTE: Their income still counts in full — this is NOT income proration "
-                    f"(income proration applies only to sponsored noncitizens under 7 CFR 273.11(c)(3))."
+                    f'Income: 273.11(c)(3)(i) requires the State agency to "count all or, at the '
+                    f"discretion of the State agency, all but a pro rata share, of the ineligible "
+                    f"alien's income and deductible expenses\". This jurisdiction counts all of it, "
+                    f"so the full ${gross:,.2f} is tested against {eligible_count}-person limits. "
+                    f"A state electing the pro rata option would instead count "
+                    f"{eligible_count}/{total_members} of it."
                 ),
                 result=(
                     f"HH size for limit lookup: {eligible_count} (reduced from {total_members}). "
@@ -1081,7 +2067,7 @@ class SNAPEligibilityGenerator(Generator):
                     # FLAGGED, NOT RESOLVED (see the Task 1 fix report): whether the
                     # 1-2-person minimum-benefit floor should apply here at all -- and
                     # whether `eligible_count` is the right basis for it -- under 7 CFR
-                    # 273.11(c)(2)/273.4(c)(3) for a size-reduced, non-categorically-linked
+                    # 273.11(c)(2)/273.11(c)(3) for a size-reduced, non-categorically-linked
                     # household is a real policy question this task does not resolve with
                     # confidence. Left as the plain drop-in rather than forcing a guess.
                     "monthly_allotment": (self._estimate_benefit(eligible_count, net_income) if is_eligible else None),
@@ -1091,21 +2077,22 @@ class SNAPEligibilityGenerator(Generator):
             expected_outcome=outcome,
             expected_answer=(
                 f"This household is {'ELIGIBLE' if is_eligible else 'INELIGIBLE'}. "
-                f"Under 7 CFR 273.4(c)(3), the {ineligible_count} ineligible member is excluded from "
-                f"household size for limit lookup ({total_members}→{eligible_count} persons), but their income "
-                f"counts in full. The household's full income of ${gross:,.2f} is tested against "
-                f"{eligible_count}-person limits."
+                f"Under 7 CFR 273.11(c)(3), the {ineligible_count} ineligible member is excluded from "
+                f"the household size used for the limit lookup ({total_members}→{eligible_count} persons). "
+                f"273.11(c)(3)(i) lets the State agency count all, or all but a pro rata share, of "
+                f"that member's income; this jurisdiction counts all of it, so the household's full "
+                f"income of ${gross:,.2f} is tested against {eligible_count}-person limits."
             ),
             rationale_trace=RationaleTrace(
                 steps=steps,
                 conclusion=(
                     f"{'ELIGIBLE' if is_eligible else 'INELIGIBLE'}. {reason} "
-                    f"(using {eligible_count}-person limits per 7 CFR 273.4(c)(3))"
+                    f"(using {eligible_count}-person limits per 7 CFR 273.11(c)(3))"
                 ),
                 policy_basis=[
                     PolicyCitation(
                         document="7 CFR Part 273",
-                        section="7 CFR 273.4(c)(3)",
+                        section="7 CFR 273.11(c)(3)",
                         year=self.fiscal_year,
                         url="https://www.ecfr.gov/current/title-7/part-273",
                     )

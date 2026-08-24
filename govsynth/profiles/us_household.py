@@ -71,6 +71,31 @@ class USHouseholdProfile:
             self.zip_code = _faker.zipcode()
         if self.earned_income is None:
             self.earned_income = self.monthly_gross_income
+        # A household whose HEAD is 60+ definitionally contains an elderly
+        # member (7 CFR 271.2 defines "elderly member" as age 60 or older), so
+        # `has_elderly_or_disabled=False` alongside `age_of_head >= 60` is not a
+        # different household -- it is a contradiction, and one the rendered
+        # prose puts in front of the model ("Kurt Oconnell is a 63-year-old
+        # single parent...") while the expected reasoning applies the gross
+        # income test that 7 CFR 273.9(a)(2) waives for such households.
+        #
+        # Measured before this guard: 14% of SNAP threshold profiles. A model
+        # fine-tuned on that corpus read the stated age, correctly inferred
+        # elderly status, and was penalized against a label that said otherwise
+        # -- then degenerated into repetition loops on exactly those cases at
+        # eval time. The reasoning was right and the ground truth was wrong.
+        #
+        # One-directional on purpose: the flag may be True with a head under 60
+        # (a disabled member, or an elderly member who is not the head). Only
+        # the 60+/False combination is contradictory. Raise rather than coerce
+        # -- silently flipping the flag would relabel a case that was sampled to
+        # anchor on the gross income test onto a test that no longer binds.
+        if self.age_of_head >= 60 and not self.has_elderly_or_disabled:
+            raise ValueError(
+                f"age_of_head={self.age_of_head} implies the household contains an elderly "
+                f"member (7 CFR 271.2: age 60+), but has_elderly_or_disabled=False. "
+                f"Sample age_of_head below 60 for a non-elderly household, or set the flag."
+            )
 
     @classmethod
     def random(
@@ -113,7 +138,7 @@ class USHouseholdProfile:
             liquid_assets=round(rng.uniform(0, 5000), -2),
             has_elderly_or_disabled=has_elderly,
             has_dependent_children=has_children,
-            age_of_head=rng.randint(22, 72),
+            age_of_head=_age_consistent_with(has_elderly, rng, young=(22, 72)),
             shelter_costs=round(rng.uniform(600, 2500), -1),
         )
 
@@ -218,6 +243,17 @@ class USHouseholdProfile:
         )
 
 
+def _age_consistent_with(has_elderly: bool, rng: random.Random, *, young: tuple[int, int]) -> int:
+    """Sample a head-of-household age that cannot contradict `has_elderly`.
+
+    `USHouseholdProfile.__post_init__` rejects `age_of_head >= 60` alongside
+    `has_elderly_or_disabled=False` (7 CFR 271.2). Sampling the age from a range
+    chosen by the flag keeps every construction site on the legal side of that
+    invariant instead of relying on each call site to remember it.
+    """
+    return rng.randint(60, 85) if has_elderly else rng.randint(young[0], min(young[1], 59))
+
+
 def _build_realistic_profile(state: str, rng: random.Random) -> USHouseholdProfile:
     """Build a profile sampled from Census ACS state-level distributions.
 
@@ -232,14 +268,15 @@ def _build_realistic_profile(state: str, rng: random.Random) -> USHouseholdProfi
         # No census data available -- silent fallback to national approximations
         hh_size = rng.choices([1, 2, 3, 4, 5, 6], weights=[0.28, 0.34, 0.16, 0.13, 0.06, 0.03])[0]
         gross = min(max(round(rng.lognormvariate(8.1, 0.7), -1), 0), 15000)
+        fallback_has_elderly = rng.random() < 0.15
         return USHouseholdProfile(
             household_size=hh_size,
             monthly_gross_income=float(gross),
             state=state.upper(),
             liquid_assets=round(rng.uniform(0, 5000), -2),
-            has_elderly_or_disabled=rng.random() < 0.15,
+            has_elderly_or_disabled=fallback_has_elderly,
             has_dependent_children=rng.random() < 0.35 if hh_size > 1 else False,
-            age_of_head=rng.randint(22, 72),
+            age_of_head=_age_consistent_with(fallback_has_elderly, rng, young=(22, 72)),
             shelter_costs=round(rng.uniform(600, 2500), -1),
         )
 
@@ -278,6 +315,15 @@ def _build_realistic_profile(state: str, rng: random.Random) -> USHouseholdProfi
 
     # Step 10: age -- Normal(mu, sigma) clamped to [18, 80]
     age = max(18, min(80, round(rng.normalvariate(dist.age_mu, dist.age_sigma))))
+
+    # `has_elderly` was drawn at Step 5-6 from dist.pct_elderly_or_disabled,
+    # independently of this ACS-fitted age. Where the sampled age is 60+, the
+    # household contains an elderly member by definition (7 CFR 271.2) and the
+    # independent draw cannot overrule it. Widening the flag here (rather than
+    # resampling the age) keeps the ACS age distribution intact; the flag stays
+    # a superset, since a household with a head under 60 can still qualify
+    # through a disabled member.
+    has_elderly = has_elderly or age >= 60
 
     # dist.pct_social_security, dist.pct_ssi, dist.pct_public_assistance are available
     # for future income-source enrichment (e.g. flagging SSI/SSDI receipt on the profile).
@@ -341,6 +387,26 @@ def _build_snap_threshold_profile(
         assets = round(t.asset_limit_general * 0.5, 0) if t.asset_limit_general else 500.0
 
     elif threshold == "net_income_limit":
+        # Elderly/disabled status is orthogonal to which threshold binds, but it
+        # used to be reachable ONLY through the asset_limit_elderly_disabled
+        # threshold above. That threshold is dropped from sampling entirely in a
+        # BBCE state that waives the asset test (see
+        # snap_eligibility._sample_edge_profile), so in most BBCE states NO edge
+        # case ever contained an elderly or disabled member -- and the
+        # "gross income test waived for elderly/disabled households" reasoning
+        # path reached only 3.2% of a 13,760-record training set. A fine-tune on
+        # that set degenerated into verbatim repetition loops on exactly the
+        # held-out BBCE + elderly/disabled cases it had never been shown.
+        #
+        # The net income test still binds for these households (only the GROSS
+        # test is waived, 7 CFR 273.9(a)(2)), so this threshold is the correct
+        # place to sample it: the case stays anchored on a test that actually
+        # applies. 0.40 is close to the FNS SNAP Household Characteristics share
+        # of households containing an elderly or disabled member, so it makes the
+        # mix more realistic rather than merely more varied. Deliberately NOT
+        # sampled for the gross_income_limit threshold, where a waived gross test
+        # would leave that case anchored on a test that does not bind.
+        has_elderly = rng.random() < 0.40
         # Back-calculate gross income that yields net income at the limit
         std_ded = get_standard_deduction(household_size)
         # net = gross - (gross * 0.20) - std = gross * 0.80 - std
@@ -382,7 +448,7 @@ def _build_snap_threshold_profile(
         state=state.upper(),
         has_elderly_or_disabled=has_elderly,
         has_dependent_children=household_size > 1 and not has_elderly,
-        age_of_head=rng.randint(25, 65),
+        age_of_head=_age_consistent_with(has_elderly, rng, young=(25, 65)),
         shelter_costs=round(rng.uniform(800, 1800), -1),
         extra={
             "threshold_type": threshold,

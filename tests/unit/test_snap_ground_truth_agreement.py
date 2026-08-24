@@ -50,7 +50,7 @@ Two things this file is careful about:
 - The financial facts are read off the CASE, not recomputed. `household_size` for
   the limit lookup comes from `additional_context["eligible_member_count"]` when
   present (the mixed-immigration builder tests full income against a reduced
-  household size, per 7 CFR 273.4(c)(3)) and from `scenario.household_size`
+  household size, per 7 CFR 273.11(c)(3)) and from `scenario.household_size`
   otherwise. If a builder ever writes a scenario whose stated facts do not
   produce its own stated outcome, that is precisely the bug being hunted.
 - One case type is genuinely NOT decided by the financial waterfall:
@@ -79,7 +79,11 @@ FISCAL_YEAR = 2026
 
 # Case types whose determinative rule is not the financial waterfall. Exempted
 # from the equality assertion and covered by their own test below instead.
-NON_FINANCIAL_OUTCOME_TYPES = frozenset({"student_exclusion"})
+# Case types whose outcome is NOT decided by the financial waterfall, so the
+# outcome-equality check below cannot apply to them. Each one has a dedicated
+# test asserting the stronger property instead: that the financial test PASSES,
+# so the non-financial rule is demonstrably what decides the case.
+NON_FINANCIAL_OUTCOME_TYPES = frozenset({"student_exclusion", "noncitizen_status_eligibility"})
 
 
 def all_jurisdictions(fiscal_year: int = FISCAL_YEAR) -> list[str]:
@@ -96,8 +100,11 @@ def financial_facts(case: TestCase) -> dict[str, Any]:
     """
     context = case.scenario.additional_context or {}
     return {
-        # 7 CFR 273.4(c)(3): ineligible members leave the household size used for
-        # the limit lookup while their income still counts in full.
+        # 7 CFR 273.11(c)(3): an ineligible alien leaves the household size used for
+        # the limit lookup. Whether their income is counted in full or less a pro
+        # rata share is a state election under (c)(3)(i); the builder generates the
+        # count-all election, which is why full income is the right basis here.
+        # NOT 273.4(c), which is sponsor deeming -- a different mechanism.
         "household_size": context.get("eligible_member_count", case.scenario.household_size),
         "gross_income": case.scenario.monthly_gross_income,
         "net_income": case.scenario.monthly_net_income,
@@ -179,7 +186,7 @@ def stated_limit_household_size(case: TestCase) -> int:
     """The household size this case's own gross-limit lookup used.
 
     Same rule as `financial_facts`: `eligible_member_count` when the builder tested
-    full income against a reduced household size (7 CFR 273.4(c)(3)), else the
+    full income against a reduced household size (7 CFR 273.11(c)(3)), else the
     scenario's household size.
     """
     context = case.scenario.additional_context or {}
@@ -613,10 +620,10 @@ def test_the_agreement_check_rejects_the_federal_limit_regression() -> None:
 
 
 def test_jurisdictions_without_a_raised_gross_limit_skip_the_bbce_expanded_case() -> None:
-    """A jurisdiction with no band above 130% FPL generates the other six types.
+    """A jurisdiction with no band above 130% FPL generates the other eight types.
 
     It must NOT borrow another jurisdiction's parameters to manufacture the
-    seventh -- see `SNAPEligibilityGenerator.supports_bbce_expanded_income`.
+    ninth -- see `SNAPEligibilityGenerator.supports_bbce_expanded_income`.
     """
     non_bbce_or_flat = [
         code
@@ -630,7 +637,7 @@ def test_jurisdictions_without_a_raised_gross_limit_skip_the_bbce_expanded_case(
         generator = SNAPEligibilityGenerator(fiscal_year=FISCAL_YEAR, state=code)
         cases = generator.generate(n=40, profile_strategy="edge_saturated", seed=20260810)
         assert not [c for c in cases if "bbce_expanded_gross_limit" in c.variation_tags], code
-        assert len(generator._available_special_population_builders()) == 6, code
+        assert len(generator._available_special_population_builders()) == 8, code
         with pytest.raises(ValueError, match="cannot support a BBCE expanded-gross-limit case"):
             generator._build_bbce_expanded_income_case(random.Random(0))
 
@@ -659,3 +666,84 @@ def test_asset_figure_in_the_scenario_is_the_one_the_determination_used() -> Non
                     f"{case.case_id}: outcome {case.expected_outcome!r} was not decided from the "
                     f"assets (${case.scenario.liquid_assets:,.2f}) the scenario states -- {reason}"
                 )
+
+
+def test_noncitizen_status_cases_are_decided_by_status_not_income() -> None:
+    """The second exempted case type, held to the same stronger assertion as the first.
+
+    `noncitizen_status_eligibility` is exempt from the outcome-equality check above
+    because a denial on immigration status is not a financial denial -- but that
+    exemption is only honest if the financial test genuinely does not decide the
+    case. So every case, eligible or not, must be financially ELIGIBLE on its own
+    stated facts. A status-denied case that also failed the income test would be
+    indistinguishable from an ordinary income denial, and would let the exemption
+    hide a real regression.
+
+    Also asserts every status variant is reachable: the outcome is selected from a
+    table, and a mistyped or unreachable entry would silently shrink the corpus
+    without failing anything else.
+    """
+    seen_keys: set[str] = set()
+    checked = 0
+    for state in ("VA", "AL", "CA", "GU", "VI"):
+        generator = SNAPEligibilityGenerator(fiscal_year=FISCAL_YEAR, state=state)
+        for seed in range(60):
+            case = generator._build_noncitizen_status_case(random.Random(seed))
+            context = case.scenario.additional_context
+            seen_keys.add(context["noncitizen_case"])
+
+            financial, reason = bbce_outcome(case)
+            assert financial == "eligible", (
+                f"{case.case_id}: this case is supposed to turn on immigration status, but its "
+                f"own stated finances make it ineligible anyway ({reason}) -- so it does not "
+                "demonstrate that status decides the case"
+            )
+
+            # The outcome must follow from the two status facts, not from anything else.
+            expected = (
+                "eligible"
+                if context["status_category_eligible"] and not context["five_year_bar_applies"]
+                else "ineligible"
+            )
+            assert case.expected_outcome == expected, (
+                f"{case.case_id}: status_category_eligible="
+                f"{context['status_category_eligible']}, five_year_bar_applies="
+                f"{context['five_year_bar_applies']}, so the outcome should be {expected!r}"
+            )
+            checked += 1
+
+    assert checked == 300
+    expected_keys = {
+        spec["key"] for spec in SNAPEligibilityGenerator(fiscal_year=FISCAL_YEAR, state="VA")._NONCITIZEN_STATUS_CASES
+    }
+    assert seen_keys == expected_keys, f"unreachable status variants: {sorted(expected_keys - seen_keys)}"
+
+
+def test_refugee_and_asylee_cases_state_the_statute_not_the_stale_regulation() -> None:
+    """The whole point of the refugee/asylee cases is that the CFR is out of date.
+
+    P.L. 119-21 sec 10108 removed status-based eligibility for refugees and asylees
+    on 2025-07-04, but 7 CFR 273.4(a)(6)(ii) still lists both as eligible. If a case
+    ever cited the regulation as its authority here it would be teaching the
+    superseded rule, which is the exact error this case type exists to correct.
+    """
+    generator = SNAPEligibilityGenerator(fiscal_year=FISCAL_YEAR, state="VA")
+    found = 0
+    for seed in range(400):
+        case = generator._build_noncitizen_status_case(random.Random(seed))
+        if case.scenario.additional_context["noncitizen_case"] not in (
+            "refugee_not_adjusted",
+            "asylee_not_adjusted",
+        ):
+            continue
+        found += 1
+        assert case.expected_outcome == "ineligible", case.case_id
+        status_step = case.rationale_trace.steps[0]
+        assert "P.L. 119-21" in status_step.rule_applied, (
+            f"{case.case_id}: authority is {status_step.rule_applied!r}, which does not name the "
+            "statute that actually governs"
+        )
+        assert status_step.note and "stale" in status_step.note, (
+            f"{case.case_id}: does not warn that 7 CFR 273.4(a)(6)(ii) still says otherwise"
+        )
+    assert found > 0, "no refugee or asylee cases generated in 400 draws"
