@@ -714,10 +714,7 @@ def test_noncitizen_status_cases_are_decided_by_status_not_income() -> None:
 
     assert checked == 300
     expected_keys = {
-        spec["key"]
-        for spec in SNAPEligibilityGenerator(
-            fiscal_year=FISCAL_YEAR, state="VA"
-        )._NONCITIZEN_STATUS_CASES
+        spec["key"] for spec in SNAPEligibilityGenerator(fiscal_year=FISCAL_YEAR, state="VA")._NONCITIZEN_STATUS_CASES
     }
     assert seen_keys == expected_keys, f"unreachable status variants: {sorted(expected_keys - seen_keys)}"
 

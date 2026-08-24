@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Callable
+from typing import TypedDict
 
 from govsynth.fiscal_year import DEFAULT_SNAP_FY, FiscalYearConfig
 from govsynth.generators.base import Generator
@@ -42,6 +43,44 @@ _TASK_INSTRUCTION = (
     "State your final determination (eligible or ineligible) and, if eligible, estimate "
     "the approximate monthly benefit amount."
 )
+
+
+class _FiveYearBar(TypedDict):
+    """The five-year-bar arm of a noncitizen case (8 U.S.C. 1613)."""
+
+    applies: bool
+    why: str
+
+
+class _NoncitizenCaseBase(TypedDict):
+    """One noncitizen status variant. See `_NONCITIZEN_STATUS_CASES`.
+
+    Spelled out as a TypedDict rather than left as a bare dict literal because
+    mypy --strict infers a heterogeneous literal as dict[str, object], which
+    makes every `spec["category_rule"]` an `object` and fails at the point it is
+    passed to `ReasoningStep(rule_applied=...)`.
+    """
+
+    key: str
+    phrase: str
+    category: str
+    category_eligible: bool
+    category_rule: str
+    category_why: str
+    # None for categories with no waiting period at all (Cuban/Haitian entrants,
+    # COFA citizens) and for statuses that are not eligible in the first place.
+    bar: _FiveYearBar | None
+
+
+class _NoncitizenCase(_NoncitizenCaseBase, total=False):
+    """`total=False` inheritance keeps `stale_reg_warning` genuinely optional.
+
+    typing.NotRequired would be cleaner but is 3.11+, and this package targets
+    3.10. Only the refugee and asylee cases set it -- they are the ones where
+    7 CFR 273.4(a)(6)(ii) still contradicts the governing statute.
+    """
+
+    stale_reg_warning: bool
 
 
 class SNAPEligibilityGenerator(Generator):
@@ -872,16 +911,10 @@ class SNAPEligibilityGenerator(Generator):
         # the source of truth; the scenario reports 12-month totals so the rationale
         # has to perform the averaging in (a)(1)(i) instead of being handed the answer.
         allowable = {
-            f"{stock_label} (stock and raw material)": round(
-                net_se_monthly * rng.uniform(0.12, 0.28), 2
-            ),
+            f"{stock_label} (stock and raw material)": round(net_se_monthly * rng.uniform(0.12, 0.28), 2),
             "equipment principal payments": round(net_se_monthly * rng.uniform(0.05, 0.12), 2),
-            "business liability insurance premiums": round(
-                net_se_monthly * rng.uniform(0.03, 0.07), 2
-            ),
-            "taxes on income-producing property": round(
-                net_se_monthly * rng.uniform(0.02, 0.05), 2
-            ),
+            "business liability insurance premiums": round(net_se_monthly * rng.uniform(0.03, 0.07), 2),
+            "taxes on income-producing property": round(net_se_monthly * rng.uniform(0.02, 0.05), 2),
         }
         allowable_monthly = round(sum(allowable.values()), 2)
         receipts_monthly = round(net_se_monthly + allowable_monthly, 2)
@@ -891,12 +924,8 @@ class SNAPEligibilityGenerator(Generator):
         disallowed = {
             "depreciation on equipment": round(net_se_monthly * rng.uniform(0.06, 0.14), 2),
             "income tax set aside": round(net_se_monthly * rng.uniform(0.05, 0.10), 2),
-            "commuting between home and job sites": round(
-                net_se_monthly * rng.uniform(0.03, 0.08), 2
-            ),
-            "net loss carried over from the prior year": round(
-                net_se_monthly * rng.uniform(0.04, 0.09), 2
-            ),
+            "commuting between home and job sites": round(net_se_monthly * rng.uniform(0.03, 0.08), 2),
+            "net loss carried over from the prior year": round(net_se_monthly * rng.uniform(0.04, 0.09), 2),
         }
         disallowed_monthly = round(sum(disallowed.values()), 2)
 
@@ -928,8 +957,7 @@ class SNAPEligibilityGenerator(Generator):
         uid = build_short_uid(rng)
         outcome = "eligible" if is_eligible else "ineligible"
         case_id = (
-            f"snap.{self.state.lower()}.eligibility."
-            f"self_employment_cost_of_doing_business.{outcome}.hh{hh_size}.{uid}"
+            f"snap.{self.state.lower()}.eligibility.self_employment_cost_of_doing_business.{outcome}.hh{hh_size}.{uid}"
         )
 
         allowable_annual_items = {k: round(v * months, 2) for k, v in allowable.items()}
@@ -940,10 +968,7 @@ class SNAPEligibilityGenerator(Generator):
         steps = [
             ReasoningStep(
                 step_number=1,
-                title=(
-                    "Separate allowable costs of doing business from non-allowable items "
-                    "(7 CFR 273.11(b))"
-                ),
+                title=("Separate allowable costs of doing business from non-allowable items (7 CFR 273.11(b))"),
                 rule_applied="7 CFR 273.11(b)(1), (b)(2)",
                 inputs={
                     "allowable_costs_annual": allowable_annual_items,
@@ -958,8 +983,8 @@ class SNAPEligibilityGenerator(Generator):
                     f"${allowable_annual:,.2f} over {months} months. "
                     f"NOT allowable under 7 CFR 273.11(b)(2): {disallowed_lines}. A net loss from a "
                     f"previous period is barred by (b)(2)(i); income tax set aside and commuting to "
-                    f"and from work are barred by (b)(2)(ii) because those expenses \"are accounted "
-                    f"for by the 20 percent earned income deduction specified in §273.9(d)(2)\"; "
+                    f'and from work are barred by (b)(2)(ii) because those expenses "are accounted '
+                    f'for by the 20 percent earned income deduction specified in §273.9(d)(2)"; '
                     f"depreciation is barred by (b)(2)(iii). Total excluded from the cost offset: "
                     f"${disallowed_annual:,.2f}."
                 ),
@@ -972,10 +997,7 @@ class SNAPEligibilityGenerator(Generator):
             ),
             ReasoningStep(
                 step_number=2,
-                title=(
-                    "Average self-employment income over the period it is intended to cover "
-                    "(7 CFR 273.11(a))"
-                ),
+                title=("Average self-employment income over the period it is intended to cover (7 CFR 273.11(a))"),
                 rule_applied="7 CFR 273.11(a)(1)(i), (a)(2)(i)",
                 inputs={
                     "gross_receipts_annual": receipts_annual,
@@ -1073,9 +1095,7 @@ class SNAPEligibilityGenerator(Generator):
                     "allowable_costs_annual": allowable_annual_items,
                     "non_allowable_items_annual": disallowed_annual_items,
                     "self_employed": True,
-                    "monthly_allotment": (
-                        self._estimate_benefit(hh_size, net_income) if is_eligible else None
-                    ),
+                    "monthly_allotment": (self._estimate_benefit(hh_size, net_income) if is_eligible else None),
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -1155,7 +1175,7 @@ class SNAPEligibilityGenerator(Generator):
     # Conditional entrants, battered immigrants, and general one-year parolees ARE.
     # Cases 3-8 below are matched pairs on exactly that distinction: same household,
     # same income, same current status, opposite answers.
-    _NONCITIZEN_STATUS_CASES = (
+    _NONCITIZEN_STATUS_CASES: tuple[_NoncitizenCase, ...] = (
         {
             "key": "refugee_not_adjusted",
             "phrase": (
@@ -1495,10 +1515,7 @@ class SNAPEligibilityGenerator(Generator):
 
         uid = build_short_uid(rng)
         outcome = "eligible" if is_eligible else "ineligible"
-        case_id = (
-            f"snap.{self.state.lower()}.eligibility."
-            f"noncitizen_status_{spec['key']}.{outcome}.hh{hh_size}.{uid}"
-        )
+        case_id = f"snap.{self.state.lower()}.eligibility.noncitizen_status_{spec['key']}.{outcome}.hh{hh_size}.{uid}"
 
         steps = [
             ReasoningStep(
@@ -1672,9 +1689,7 @@ class SNAPEligibilityGenerator(Generator):
                     "status_category_eligible": bool(spec["category_eligible"]),
                     "five_year_bar_applies": bar_blocks,
                     "governing_law": "P.L. 119-21 sec 10108 (2025-07-04)",
-                    "monthly_allotment": (
-                        self._estimate_benefit(hh_size, net_income) if is_eligible else None
-                    ),
+                    "monthly_allotment": (self._estimate_benefit(hh_size, net_income) if is_eligible else None),
                 },
             ),
             task=TaskBlock(instruction=_TASK_INSTRUCTION),
@@ -1694,8 +1709,7 @@ class SNAPEligibilityGenerator(Generator):
                         f"7 U.S.C. 2015(f) as amended by P.L. 119-21 sec 10108."
                         if not spec["category_eligible"]
                         else (
-                            "The five-year waiting period under 8 U.S.C. 1613 is not met and no "
-                            "exception applies."
+                            "The five-year waiting period under 8 U.S.C. 1613 is not met and no exception applies."
                             if bar_blocks
                             else "Status is eligible and both income tests pass."
                         )
@@ -1975,7 +1989,7 @@ class SNAPEligibilityGenerator(Generator):
                     f"alien) members: {ineligible_count}. Under 7 CFR 273.11(c)(3), an ineligible "
                     f"alien is excluded from the household size used for the limit lookup. "
                     f"HH size for limit lookup: {total_members} − {ineligible_count} = {eligible_count}. "
-                    f"Income: 273.11(c)(3)(i) requires the State agency to \"count all or, at the "
+                    f'Income: 273.11(c)(3)(i) requires the State agency to "count all or, at the '
                     f"discretion of the State agency, all but a pro rata share, of the ineligible "
                     f"alien's income and deductible expenses\". This jurisdiction counts all of it, "
                     f"so the full ${gross:,.2f} is tested against {eligible_count}-person limits. "
