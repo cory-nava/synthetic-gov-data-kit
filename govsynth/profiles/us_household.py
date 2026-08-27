@@ -20,6 +20,13 @@ from govsynth.models.enums import CitizenshipStatus
 
 _faker = Faker("en_US")
 
+# See `USHouseholdProfile.natural_language_summary_styled`. Named as a public
+# constant, not a magic set of strings scattered at call sites, so a caller
+# building a diverse corpus can iterate `PHRASING_STYLES` to get all of them
+# rather than hardcoding a list that could silently drift from what the method
+# actually implements.
+PHRASING_STYLES: tuple[str, ...] = ("caseworker_note", "narrative", "terse", "conversational", "formal")
+
 
 @dataclass
 class USHouseholdProfile:
@@ -241,6 +248,124 @@ class USHouseholdProfile:
             f" in {self.city}, {self.state}. "
             f"Their household has {income_desc} and {asset_desc}.{elderly_desc}{citizenship_desc}"
         )
+
+    def natural_language_summary_styled(self, style: str, program: str = "snap") -> str:
+        """`natural_language_summary`, in a different register, same facts.
+
+        Exists because every scenario in this kit currently renders through
+        that ONE sentence template. Measured on the SNAP CoT fine-tune corpus
+        (see the RLVR post-mortem in the Nava Work Vault), that is 7,402
+        training records that all read alike -- one system prompt covering
+        100% of them, and only ~4,300 distinct masked-number templates for
+        7,402 records. Published 2026 findings on RLVR training report
+        measured generalization gains from prompt-side diversity (roughly
+        +1.8pp in-domain, +2.6pp out-of-domain in one study), and separately
+        warn that low diversity drives "diversity collapse" during RL
+        training. This method is the mechanism for that diversity: same
+        `USHouseholdProfile`, several genuinely different renderings.
+
+        Every style below states the SAME facts as `natural_language_summary`
+        -- name, age, household composition, city/state, gross income, assets,
+        the elderly/disabled flag, citizenship status when non-citizen -- and
+        renders every number identically (`f"{x:,.0f}"` on the same field), so
+        no downstream consumer (a reward function, a human grader, a model
+        being trained) can read a different fact out of a different style.
+        Only sentence structure, ordering, and register vary. Dropping a fact
+        in one style but not another would silently make some training
+        records easier than others for a reason that has nothing to do with
+        SNAP policy -- see `test_all_styles_state_the_same_facts` in
+        test_us_household_profile.py, which is what actually guards this.
+
+        Raises ValueError for an unrecognized `style` rather than falling back
+        to the default silently -- a typo'd style name should fail loudly, not
+        quietly collapse the requested diversity back to one template.
+        """
+        if style not in PHRASING_STYLES:
+            raise ValueError(f"unknown phrasing style {style!r}; choose one of {PHRASING_STYLES}")
+
+        hh_desc = _household_description(self.household_size, self.has_dependent_children)
+        assets_present = self.liquid_assets > 0
+        elderly = self.has_elderly_or_disabled
+        noncitizen = self.citizenship_status != CitizenshipStatus.CITIZEN
+        citizenship_label = self.citizenship_status.value.replace("_", " ")
+
+        if style == "caseworker_note":
+            lines = [
+                f"Applicant: {self.head_of_household_name}, age {self.age_of_head}.",
+                f"Household: {hh_desc}, located in {self.city}, {self.state}.",
+                f"Gross income: ${self.monthly_gross_income:,.0f}/month.",
+                f"Liquid assets: ${self.liquid_assets:,.0f}." if assets_present else "Liquid assets: none reported.",
+            ]
+            if elderly:
+                lines.append("Elderly or disabled household member: yes (age 60+ or disabled).")
+            if noncitizen:
+                lines.append(f"Citizenship status: {citizenship_label}.")
+            return " ".join(lines)
+
+        if style == "narrative":
+            opening = (
+                f"In {self.city}, {self.state}, {self.head_of_household_name}, {self.age_of_head} years old, "
+                f"heads a household best described as a {hh_desc}."
+            )
+            money = (
+                f"Every month the household brings in ${self.monthly_gross_income:,.0f} in gross income, "
+                + (
+                    f"against ${self.liquid_assets:,.0f} held in savings."
+                    if assets_present
+                    else "with no meaningful savings to draw on."
+                )
+            )
+            extra = ""
+            if elderly:
+                extra += " Someone in the household is age 60 or older, or disabled."
+            if noncitizen:
+                extra += f" {self.head_of_household_name} holds {citizenship_label} status."
+            return f"{opening} {money}{extra}"
+
+        if style == "terse":
+            parts = [
+                f"{self.head_of_household_name}",
+                f"age {self.age_of_head}",
+                hh_desc,
+                f"{self.city}, {self.state}",
+                f"${self.monthly_gross_income:,.0f}/mo gross",
+                f"${self.liquid_assets:,.0f} savings" if assets_present else "no savings",
+            ]
+            if elderly:
+                parts.append("elderly/disabled member")
+            if noncitizen:
+                parts.append(citizenship_label)
+            return "; ".join(parts) + "."
+
+        if style == "conversational":
+            text = (
+                f"So here's the situation: {self.head_of_household_name} is {self.age_of_head}, lives in "
+                f"{self.city}, {self.state}, and the household is a {hh_desc}. Money-wise, they're bringing home "
+                f"about ${self.monthly_gross_income:,.0f} a month, and "
+                + (
+                    f"they've got ${self.liquid_assets:,.0f} put away in savings."
+                    if assets_present
+                    else "they don't really have savings to speak of."
+                )
+            )
+            if elderly:
+                text += " Also worth noting, someone in the household is 60 or older, or disabled."
+            if noncitizen:
+                text += f" {self.head_of_household_name} is a {citizenship_label}."
+            return text
+
+        # style == "formal"
+        text = (
+            f"The applicant, {self.head_of_household_name}, is {self.age_of_head} years of age and resides in "
+            f"{self.city}, {self.state}, as the head of a household constituting a {hh_desc}. The household's "
+            f"monthly gross income is ${self.monthly_gross_income:,.0f}, and its liquid assets are "
+            + (f"${self.liquid_assets:,.0f}." if assets_present else "not significant.")
+        )
+        if elderly:
+            text += " A member of the household is elderly (age 60 or older) or disabled."
+        if noncitizen:
+            text += f" The applicant holds {citizenship_label} status."
+        return text
 
 
 def _age_consistent_with(has_elderly: bool, rng: random.Random, *, young: tuple[int, int]) -> int:
