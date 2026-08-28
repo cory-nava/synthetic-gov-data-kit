@@ -27,6 +27,11 @@ _faker = Faker("en_US")
 # actually implements.
 PHRASING_STYLES: tuple[str, ...] = ("caseworker_note", "narrative", "terse", "conversational", "formal")
 
+# See `USHouseholdProfile.generate_scenario_question_styled`. Question phrasing styles
+# for eligibility scenarios -- all ask the same underlying question but from
+# different angles/registers, supporting semantic variation for RLVR training.
+SCENARIO_PHRASING_STYLES: tuple[str, ...] = ("direct", "exploratory", "constraint_focused", "outcome_focused", "policy_grounded")
+
 
 @dataclass
 class USHouseholdProfile:
@@ -366,6 +371,58 @@ class USHouseholdProfile:
         if noncitizen:
             text += f" The applicant holds {citizenship_label} status."
         return text
+
+    def generate_scenario_question_styled(self, style: str, program: str = "snap") -> str:
+        """Generate an eligibility determination question in a specific phrasing style.
+
+        All styles ask the same underlying question about eligibility but from different angles
+        and registers. They state identical facts (income, assets, household composition) but vary
+        in framing, terminology, and reasoning focus. This supports semantic variation for RLVR
+        training: the model cannot memorize surface patterns when the same underlying scenario is
+        expressed multiple ways with consistent outcomes.
+
+        Args:
+            style: One of SCENARIO_PHRASING_STYLES
+            program: Benefits program, e.g. 'snap', 'wic', 'medicaid'
+
+        Raises:
+            ValueError: If style is not recognized.
+
+        Returns:
+            A question string in the requested style.
+        """
+        if style not in SCENARIO_PHRASING_STYLES:
+            raise ValueError(f"unknown scenario phrasing style {style!r}; choose one of {SCENARIO_PHRASING_STYLES}")
+
+        if style == "direct":
+            return (
+                f"Is this household eligible for {program.upper()} benefits? "
+                f"Show your reasoning step by step, citing relevant federal regulations."
+            )
+
+        if style == "exploratory":
+            return (
+                f"What factors determine whether this household qualifies for {program.upper()}? "
+                f"Walk through the relevant eligibility criteria and explain how this household meets or fails each one."
+            )
+
+        if style == "constraint_focused":
+            return (
+                f"Evaluate this household against the key constraints for {program.upper()} eligibility. "
+                f"What income limits, asset limits, and other thresholds apply? Where does this household stand relative to each?"
+            )
+
+        if style == "outcome_focused":
+            return (
+                f"Based on the household's situation, what would be your eligibility determination for {program.upper()}? "
+                f"Provide the specific policy justification and reference the applicable regulations."
+            )
+
+        # style == "policy_grounded"
+        return (
+            f"Using federal policy regulations, determine {program.upper()} eligibility for this household. "
+            f"Cite the specific CFR sections that apply and explain how this household's circumstances align with or diverge from the requirements."
+        )
 
 
 def _age_consistent_with(has_elderly: bool, rng: random.Random, *, young: tuple[int, int]) -> int:

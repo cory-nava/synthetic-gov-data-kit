@@ -15,7 +15,7 @@ from govsynth.generators.base import Generator
 from govsynth.models.enums import Difficulty, Program, TaskType
 from govsynth.models.rationale import PolicyCitation, RationaleTrace, ReasoningStep
 from govsynth.models.test_case import ScenarioBlock, TaskBlock, TestCase
-from govsynth.profiles.us_household import PHRASING_STYLES, USHouseholdProfile
+from govsynth.profiles.us_household import PHRASING_STYLES, SCENARIO_PHRASING_STYLES, USHouseholdProfile
 from govsynth.reasoning.rules_engine import build_short_uid
 from govsynth.sources.base import HouseholdThreshold
 from govsynth.sources.us.snap import get_standard_deduction
@@ -165,6 +165,7 @@ class SNAPEligibilityGenerator(Generator):
         seed: int | None = None,
         special_fraction: float = 0.20,
         phrasing_style: str | None = None,
+        scenario_phrasing_style: str | None = None,
     ) -> list[TestCase]:
         """Generate n SNAP eligibility test cases.
 
@@ -184,6 +185,13 @@ class SNAPEligibilityGenerator(Generator):
             noncitizen status, etc.) write their own bespoke prose and are
             unaffected either way -- they never call
             natural_language_summary at all.
+
+        scenario_phrasing_style: None (default) uses "direct" question phrasing.
+            Passing one specific style name in SCENARIO_PHRASING_STYLES renders
+            all task instructions in that style. Passing "random" renders each
+            case in a randomly chosen style (deterministic per case seed/index).
+            All styles ask the same underlying eligibility question but from
+            different angles/registers to support semantic variation for RLVR training.
 
         When profile_strategy is 'edge_saturated', 20% of cases (minimum 1 per special
         type if n >= 6) are special-population edge cases. The remainder use threshold-boundary
@@ -217,7 +225,7 @@ class SNAPEligibilityGenerator(Generator):
                 case_seed = rng.randint(0, 2**31) if seed is not None else None
                 profile = USHouseholdProfile.random(state=self.state, seed=case_seed, strategy=profile_strategy)
                 try:
-                    case = self._build_case(profile, case_seed, i, phrasing_style=phrasing_style)
+                    case = self._build_case(profile, case_seed, i, phrasing_style=phrasing_style, scenario_phrasing_style=scenario_phrasing_style)
                     cases.append(case)
                 except Exception as exc:
                     raise RuntimeError(
@@ -243,7 +251,7 @@ class SNAPEligibilityGenerator(Generator):
             case_seed = rng.randint(0, 2**31) if seed is not None else None
             profile = self._sample_edge_profile(rng, case_seed)
             try:
-                case = self._build_case(profile, case_seed, i, phrasing_style=phrasing_style)
+                case = self._build_case(profile, case_seed, i, phrasing_style=phrasing_style, scenario_phrasing_style=scenario_phrasing_style)
                 edge_cases.append(case)
             except Exception as exc:
                 raise RuntimeError(
@@ -2584,8 +2592,12 @@ class SNAPEligibilityGenerator(Generator):
         index: int,
         *,
         phrasing_style: str | None = None,
+        scenario_phrasing_style: str | None = None,
     ) -> TestCase:
-        """Build a complete TestCase from a profile. See `generate`'s docstring for `phrasing_style`."""
+        """Build a complete TestCase from a profile.
+
+        See `generate`'s docstring for `phrasing_style` and `scenario_phrasing_style`.
+        """
         t = self.bbce_source.thresholds()
         fy_config = self.bbce_source.fy_config
         limits = t.by_household_size(min(profile.household_size, 8))
@@ -2647,6 +2659,17 @@ class SNAPEligibilityGenerator(Generator):
             profile, net_income, limits, is_eligible, reason, fy_config, benefit
         )
 
+        # Derive task instruction from scenario_phrasing_style. See `generate`'s docstring for
+        # `scenario_phrasing_style`. Uses the same deterministic-from-(seed, index) approach
+        # as phrasing_style to ensure consistency across runs without consuming rng state.
+        if scenario_phrasing_style is None:
+            task_instruction = _TASK_INSTRUCTION
+        elif scenario_phrasing_style == "random":
+            style = SCENARIO_PHRASING_STYLES[((seed or 0) + index) % len(SCENARIO_PHRASING_STYLES)]
+            task_instruction = profile.generate_scenario_question_styled(style, "snap")
+        else:
+            task_instruction = profile.generate_scenario_question_styled(scenario_phrasing_style, "snap")
+
         # Persist the computed monthly allotment so downstream consumers (e.g. the
         # JSONL formatter's machine-checkable answer block) can read the value the
         # generator already computed instead of recomputing it. This is the exact
@@ -2669,7 +2692,7 @@ class SNAPEligibilityGenerator(Generator):
                 summary=scenario_summary,
                 **scenario_fields,
             ),
-            task=TaskBlock(instruction=_TASK_INSTRUCTION),
+            task=TaskBlock(instruction=task_instruction),
             expected_outcome="eligible" if is_eligible else "ineligible",
             expected_answer=expected_answer,
             rationale_trace=trace,

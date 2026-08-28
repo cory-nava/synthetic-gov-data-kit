@@ -1,7 +1,7 @@
 """Invariants on `USHouseholdProfile` itself, independent of any generator."""
 
 import pytest
-from govsynth.profiles.us_household import PHRASING_STYLES, USHouseholdProfile
+from govsynth.profiles.us_household import PHRASING_STYLES, SCENARIO_PHRASING_STYLES, USHouseholdProfile
 
 
 def test_age_60_plus_cannot_be_labelled_non_elderly() -> None:
@@ -150,3 +150,37 @@ def test_zero_assets_never_states_a_dollar_figure_for_savings() -> None:
     for style in PHRASING_STYLES:
         text = profile.natural_language_summary_styled(style)
         assert "$0" not in text, (style, text)
+
+
+def test_unknown_scenario_phrasing_style_raises() -> None:
+    """A typo'd scenario style name must fail loudly, not silently fall back."""
+    profile = _make_profile()
+    with pytest.raises(ValueError, match="unknown scenario phrasing style"):
+        profile.generate_scenario_question_styled("fictional_style")
+
+
+def test_every_scenario_style_renders_without_error() -> None:
+    """All declared scenario phrasing styles must produce non-empty strings."""
+    profile = _make_profile()
+    for style in SCENARIO_PHRASING_STYLES:
+        question = profile.generate_scenario_question_styled(style)
+        assert question and question.strip(), style
+        assert "SNAP" in question, (style, question)
+
+
+def test_scenario_styles_produce_genuinely_different_text() -> None:
+    """Each scenario phrasing style must produce distinct text."""
+    profile = _make_profile()
+    rendered = {style: profile.generate_scenario_question_styled(style) for style in SCENARIO_PHRASING_STYLES}
+    assert len(set(rendered.values())) == len(SCENARIO_PHRASING_STYLES)
+
+
+def test_all_scenario_styles_mention_the_program() -> None:
+    """All scenario styles must reference SNAP.
+
+    Safety property: every question must make clear what program is being asked about.
+    """
+    profile = _make_profile()
+    for style in SCENARIO_PHRASING_STYLES:
+        question = profile.generate_scenario_question_styled(style, "snap")
+        assert "SNAP" in question, (style, question)
