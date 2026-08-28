@@ -20,6 +20,18 @@ from govsynth.models.enums import CitizenshipStatus
 
 _faker = Faker("en_US")
 
+# See `USHouseholdProfile.natural_language_summary_styled`. Named as a public
+# constant, not a magic set of strings scattered at call sites, so a caller
+# building a diverse corpus can iterate `PHRASING_STYLES` to get all of them
+# rather than hardcoding a list that could silently drift from what the method
+# actually implements.
+PHRASING_STYLES: tuple[str, ...] = ("caseworker_note", "narrative", "terse", "conversational", "formal")
+
+# See `USHouseholdProfile.generate_scenario_question_styled`. Question phrasing styles
+# for eligibility scenarios -- all ask the same underlying question but from
+# different angles/registers, supporting semantic variation for RLVR training.
+SCENARIO_PHRASING_STYLES: tuple[str, ...] = ("direct", "exploratory", "constraint_focused", "outcome_focused", "policy_grounded")
+
 
 @dataclass
 class USHouseholdProfile:
@@ -71,6 +83,31 @@ class USHouseholdProfile:
             self.zip_code = _faker.zipcode()
         if self.earned_income is None:
             self.earned_income = self.monthly_gross_income
+        # A household whose HEAD is 60+ definitionally contains an elderly
+        # member (7 CFR 271.2 defines "elderly member" as age 60 or older), so
+        # `has_elderly_or_disabled=False` alongside `age_of_head >= 60` is not a
+        # different household -- it is a contradiction, and one the rendered
+        # prose puts in front of the model ("Kurt Oconnell is a 63-year-old
+        # single parent...") while the expected reasoning applies the gross
+        # income test that 7 CFR 273.9(a)(2) waives for such households.
+        #
+        # Measured before this guard: 14% of SNAP threshold profiles. A model
+        # fine-tuned on that corpus read the stated age, correctly inferred
+        # elderly status, and was penalized against a label that said otherwise
+        # -- then degenerated into repetition loops on exactly those cases at
+        # eval time. The reasoning was right and the ground truth was wrong.
+        #
+        # One-directional on purpose: the flag may be True with a head under 60
+        # (a disabled member, or an elderly member who is not the head). Only
+        # the 60+/False combination is contradictory. Raise rather than coerce
+        # -- silently flipping the flag would relabel a case that was sampled to
+        # anchor on the gross income test onto a test that no longer binds.
+        if self.age_of_head >= 60 and not self.has_elderly_or_disabled:
+            raise ValueError(
+                f"age_of_head={self.age_of_head} implies the household contains an elderly "
+                f"member (7 CFR 271.2: age 60+), but has_elderly_or_disabled=False. "
+                f"Sample age_of_head below 60 for a non-elderly household, or set the flag."
+            )
 
     @classmethod
     def random(
@@ -113,7 +150,7 @@ class USHouseholdProfile:
             liquid_assets=round(rng.uniform(0, 5000), -2),
             has_elderly_or_disabled=has_elderly,
             has_dependent_children=has_children,
-            age_of_head=rng.randint(22, 72),
+            age_of_head=_age_consistent_with(has_elderly, rng, young=(22, 72)),
             shelter_costs=round(rng.uniform(600, 2500), -1),
         )
 
@@ -144,6 +181,8 @@ class USHouseholdProfile:
                 0.0  = exactly at limit
                 0.01 = 1% above limit  (should be ineligible for income tests)
                -0.01 = 1% below limit  (should be eligible)
+                0.35 = 35% above limit (clearly ineligible, not a boundary case)
+               -0.35 = 35% below limit (clearly eligible, not a boundary case)
             seed: RNG seed.
 
         Returns:
@@ -215,6 +254,187 @@ class USHouseholdProfile:
             f"Their household has {income_desc} and {asset_desc}.{elderly_desc}{citizenship_desc}"
         )
 
+    def natural_language_summary_styled(self, style: str, program: str = "snap") -> str:
+        """`natural_language_summary`, in a different register, same facts.
+
+        Exists because every scenario in this kit currently renders through
+        that ONE sentence template. Measured on the SNAP CoT fine-tune corpus
+        (see the RLVR post-mortem in the Nava Work Vault), that is 7,402
+        training records that all read alike -- one system prompt covering
+        100% of them, and only ~4,300 distinct masked-number templates for
+        7,402 records. Published 2026 findings on RLVR training report
+        measured generalization gains from prompt-side diversity (roughly
+        +1.8pp in-domain, +2.6pp out-of-domain in one study), and separately
+        warn that low diversity drives "diversity collapse" during RL
+        training. This method is the mechanism for that diversity: same
+        `USHouseholdProfile`, several genuinely different renderings.
+
+        Every style below states the SAME facts as `natural_language_summary`
+        -- name, age, household composition, city/state, gross income, assets,
+        the elderly/disabled flag, citizenship status when non-citizen -- and
+        renders every number identically (`f"{x:,.0f}"` on the same field), so
+        no downstream consumer (a reward function, a human grader, a model
+        being trained) can read a different fact out of a different style.
+        Only sentence structure, ordering, and register vary. Dropping a fact
+        in one style but not another would silently make some training
+        records easier than others for a reason that has nothing to do with
+        SNAP policy -- see `test_all_styles_state_the_same_facts` in
+        test_us_household_profile.py, which is what actually guards this.
+
+        Raises ValueError for an unrecognized `style` rather than falling back
+        to the default silently -- a typo'd style name should fail loudly, not
+        quietly collapse the requested diversity back to one template.
+        """
+        if style not in PHRASING_STYLES:
+            raise ValueError(f"unknown phrasing style {style!r}; choose one of {PHRASING_STYLES}")
+
+        hh_desc = _household_description(self.household_size, self.has_dependent_children)
+        assets_present = self.liquid_assets > 0
+        elderly = self.has_elderly_or_disabled
+        noncitizen = self.citizenship_status != CitizenshipStatus.CITIZEN
+        citizenship_label = self.citizenship_status.value.replace("_", " ")
+
+        if style == "caseworker_note":
+            lines = [
+                f"Applicant: {self.head_of_household_name}, age {self.age_of_head}.",
+                f"Household: {hh_desc}, located in {self.city}, {self.state}.",
+                f"Gross income: ${self.monthly_gross_income:,.0f}/month.",
+                f"Liquid assets: ${self.liquid_assets:,.0f}." if assets_present else "Liquid assets: none reported.",
+            ]
+            if elderly:
+                lines.append("Elderly or disabled household member: yes (age 60+ or disabled).")
+            if noncitizen:
+                lines.append(f"Citizenship status: {citizenship_label}.")
+            return " ".join(lines)
+
+        if style == "narrative":
+            opening = (
+                f"In {self.city}, {self.state}, {self.head_of_household_name}, {self.age_of_head} years old, "
+                f"heads a household best described as a {hh_desc}."
+            )
+            money = (
+                f"Every month the household brings in ${self.monthly_gross_income:,.0f} in gross income, "
+                + (
+                    f"against ${self.liquid_assets:,.0f} held in savings."
+                    if assets_present
+                    else "with no meaningful savings to draw on."
+                )
+            )
+            extra = ""
+            if elderly:
+                extra += " Someone in the household is age 60 or older, or disabled."
+            if noncitizen:
+                extra += f" {self.head_of_household_name} holds {citizenship_label} status."
+            return f"{opening} {money}{extra}"
+
+        if style == "terse":
+            parts = [
+                f"{self.head_of_household_name}",
+                f"age {self.age_of_head}",
+                hh_desc,
+                f"{self.city}, {self.state}",
+                f"${self.monthly_gross_income:,.0f}/mo gross",
+                f"${self.liquid_assets:,.0f} savings" if assets_present else "no savings",
+            ]
+            if elderly:
+                parts.append("elderly/disabled member")
+            if noncitizen:
+                parts.append(citizenship_label)
+            return "; ".join(parts) + "."
+
+        if style == "conversational":
+            text = (
+                f"So here's the situation: {self.head_of_household_name} is {self.age_of_head}, lives in "
+                f"{self.city}, {self.state}, and the household is a {hh_desc}. Money-wise, they're bringing home "
+                f"about ${self.monthly_gross_income:,.0f} a month, and "
+                + (
+                    f"they've got ${self.liquid_assets:,.0f} put away in savings."
+                    if assets_present
+                    else "they don't really have savings to speak of."
+                )
+            )
+            if elderly:
+                text += " Also worth noting, someone in the household is 60 or older, or disabled."
+            if noncitizen:
+                text += f" {self.head_of_household_name} is a {citizenship_label}."
+            return text
+
+        # style == "formal"
+        text = (
+            f"The applicant, {self.head_of_household_name}, is {self.age_of_head} years of age and resides in "
+            f"{self.city}, {self.state}, as the head of a household constituting a {hh_desc}. The household's "
+            f"monthly gross income is ${self.monthly_gross_income:,.0f}, and its liquid assets are "
+            + (f"${self.liquid_assets:,.0f}." if assets_present else "not significant.")
+        )
+        if elderly:
+            text += " A member of the household is elderly (age 60 or older) or disabled."
+        if noncitizen:
+            text += f" The applicant holds {citizenship_label} status."
+        return text
+
+    def generate_scenario_question_styled(self, style: str, program: str = "snap") -> str:
+        """Generate an eligibility determination question in a specific phrasing style.
+
+        All styles ask the same underlying question about eligibility but from different angles
+        and registers. They state identical facts (income, assets, household composition) but vary
+        in framing, terminology, and reasoning focus. This supports semantic variation for RLVR
+        training: the model cannot memorize surface patterns when the same underlying scenario is
+        expressed multiple ways with consistent outcomes.
+
+        Args:
+            style: One of SCENARIO_PHRASING_STYLES
+            program: Benefits program, e.g. 'snap', 'wic', 'medicaid'
+
+        Raises:
+            ValueError: If style is not recognized.
+
+        Returns:
+            A question string in the requested style.
+        """
+        if style not in SCENARIO_PHRASING_STYLES:
+            raise ValueError(f"unknown scenario phrasing style {style!r}; choose one of {SCENARIO_PHRASING_STYLES}")
+
+        if style == "direct":
+            return (
+                f"Is this household eligible for {program.upper()} benefits? "
+                f"Show your reasoning step by step, citing relevant federal regulations."
+            )
+
+        if style == "exploratory":
+            return (
+                f"What factors determine whether this household qualifies for {program.upper()}? "
+                f"Walk through the relevant eligibility criteria and explain how this household meets or fails each one."
+            )
+
+        if style == "constraint_focused":
+            return (
+                f"Evaluate this household against the key constraints for {program.upper()} eligibility. "
+                f"What income limits, asset limits, and other thresholds apply? Where does this household stand relative to each?"
+            )
+
+        if style == "outcome_focused":
+            return (
+                f"Based on the household's situation, what would be your eligibility determination for {program.upper()}? "
+                f"Provide the specific policy justification and reference the applicable regulations."
+            )
+
+        # style == "policy_grounded"
+        return (
+            f"Using federal policy regulations, determine {program.upper()} eligibility for this household. "
+            f"Cite the specific CFR sections that apply and explain how this household's circumstances align with or diverge from the requirements."
+        )
+
+
+def _age_consistent_with(has_elderly: bool, rng: random.Random, *, young: tuple[int, int]) -> int:
+    """Sample a head-of-household age that cannot contradict `has_elderly`.
+
+    `USHouseholdProfile.__post_init__` rejects `age_of_head >= 60` alongside
+    `has_elderly_or_disabled=False` (7 CFR 271.2). Sampling the age from a range
+    chosen by the flag keeps every construction site on the legal side of that
+    invariant instead of relying on each call site to remember it.
+    """
+    return rng.randint(60, 85) if has_elderly else rng.randint(young[0], min(young[1], 59))
+
 
 def _build_realistic_profile(state: str, rng: random.Random) -> USHouseholdProfile:
     """Build a profile sampled from Census ACS state-level distributions.
@@ -230,14 +450,15 @@ def _build_realistic_profile(state: str, rng: random.Random) -> USHouseholdProfi
         # No census data available -- silent fallback to national approximations
         hh_size = rng.choices([1, 2, 3, 4, 5, 6], weights=[0.28, 0.34, 0.16, 0.13, 0.06, 0.03])[0]
         gross = min(max(round(rng.lognormvariate(8.1, 0.7), -1), 0), 15000)
+        fallback_has_elderly = rng.random() < 0.15
         return USHouseholdProfile(
             household_size=hh_size,
             monthly_gross_income=float(gross),
             state=state.upper(),
             liquid_assets=round(rng.uniform(0, 5000), -2),
-            has_elderly_or_disabled=rng.random() < 0.15,
+            has_elderly_or_disabled=fallback_has_elderly,
             has_dependent_children=rng.random() < 0.35 if hh_size > 1 else False,
-            age_of_head=rng.randint(22, 72),
+            age_of_head=_age_consistent_with(fallback_has_elderly, rng, young=(22, 72)),
             shelter_costs=round(rng.uniform(600, 2500), -1),
         )
 
@@ -276,6 +497,15 @@ def _build_realistic_profile(state: str, rng: random.Random) -> USHouseholdProfi
 
     # Step 10: age -- Normal(mu, sigma) clamped to [18, 80]
     age = max(18, min(80, round(rng.normalvariate(dist.age_mu, dist.age_sigma))))
+
+    # `has_elderly` was drawn at Step 5-6 from dist.pct_elderly_or_disabled,
+    # independently of this ACS-fitted age. Where the sampled age is 60+, the
+    # household contains an elderly member by definition (7 CFR 271.2) and the
+    # independent draw cannot overrule it. Widening the flag here (rather than
+    # resampling the age) keeps the ACS age distribution intact; the flag stays
+    # a superset, since a household with a head under 60 can still qualify
+    # through a disabled member.
+    has_elderly = has_elderly or age >= 60
 
     # dist.pct_social_security, dist.pct_ssi, dist.pct_public_assistance are available
     # for future income-source enrichment (e.g. flagging SSI/SSDI receipt on the profile).
@@ -320,21 +550,45 @@ def _build_snap_threshold_profile(
     rng: random.Random,
 ) -> USHouseholdProfile:
     """Build a SNAP-specific threshold profile."""
-    from govsynth.sources.us.snap import SNAPSource, get_standard_deduction
+    from govsynth.sources.us.snap import get_standard_deduction
+    from govsynth.sources.us.snap_bbce import SNAPBBCESource
 
-    source = SNAPSource(fiscal_year=fiscal_year, state=state)
+    # Use the BBCE-aware source so income/asset boundaries reflect the state's actual
+    # rules (raised gross limit, waived or capped assets), not just the federal baseline.
+    source = SNAPBBCESource(fiscal_year=fiscal_year, state=state)
     t = source.thresholds()
     limits = t.by_household_size(min(household_size, 8))
+    gross_limit = source.effective_gross_limit(household_size)
 
     has_elderly = False
     gross_income: float
     assets: float = rng.uniform(500, 1500)
 
     if threshold == "gross_income_limit":
-        gross_income = round(limits.gross_monthly * (1 + offset_pct), 2)
+        gross_income = round(gross_limit * (1 + offset_pct), 2)
         assets = round(t.asset_limit_general * 0.5, 0) if t.asset_limit_general else 500.0
 
     elif threshold == "net_income_limit":
+        # Elderly/disabled status is orthogonal to which threshold binds, but it
+        # used to be reachable ONLY through the asset_limit_elderly_disabled
+        # threshold above. That threshold is dropped from sampling entirely in a
+        # BBCE state that waives the asset test (see
+        # snap_eligibility._sample_edge_profile), so in most BBCE states NO edge
+        # case ever contained an elderly or disabled member -- and the
+        # "gross income test waived for elderly/disabled households" reasoning
+        # path reached only 3.2% of a 13,760-record training set. A fine-tune on
+        # that set degenerated into verbatim repetition loops on exactly the
+        # held-out BBCE + elderly/disabled cases it had never been shown.
+        #
+        # The net income test still binds for these households (only the GROSS
+        # test is waived, 7 CFR 273.9(a)(2)), so this threshold is the correct
+        # place to sample it: the case stays anchored on a test that actually
+        # applies. 0.40 is close to the FNS SNAP Household Characteristics share
+        # of households containing an elderly or disabled member, so it makes the
+        # mix more realistic rather than merely more varied. Deliberately NOT
+        # sampled for the gross_income_limit threshold, where a waived gross test
+        # would leave that case anchored on a test that does not bind.
+        has_elderly = rng.random() < 0.40
         # Back-calculate gross income that yields net income at the limit
         std_ded = get_standard_deduction(household_size)
         # net = gross - (gross * 0.20) - std = gross * 0.80 - std
@@ -376,7 +630,7 @@ def _build_snap_threshold_profile(
         state=state.upper(),
         has_elderly_or_disabled=has_elderly,
         has_dependent_children=household_size > 1 and not has_elderly,
-        age_of_head=rng.randint(25, 65),
+        age_of_head=_age_consistent_with(has_elderly, rng, young=(25, 65)),
         shelter_costs=round(rng.uniform(800, 1800), -1),
         extra={
             "threshold_type": threshold,

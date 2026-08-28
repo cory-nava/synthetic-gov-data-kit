@@ -76,10 +76,9 @@ from pydantic import BaseModel, Field
 from typing import Annotated
 from annotated_types import Ge
 
+
 class HouseholdProfile(BaseModel):
-    monthly_gross_income: Annotated[float, Ge(0)] = Field(
-        description="Pre-deduction monthly gross income in USD"
-    )
+    monthly_gross_income: Annotated[float, Ge(0)] = Field(description="Pre-deduction monthly gross income in USD")
 ```
 
 ---
@@ -222,6 +221,7 @@ mypy govsynth/
 ### Loading threshold data
 ```python
 from govsynth.sources.us.snap import SNAPSource
+
 source = SNAPSource(fiscal_year=2026, state="VA")
 thresholds = source.fetch_thresholds()
 limit = thresholds.by_household_size(3)
@@ -230,15 +230,16 @@ limit = thresholds.by_household_size(3)
 ### Generating edge cases
 ```python
 from govsynth.profiles.us_household import USHouseholdProfile
+
 profile = USHouseholdProfile.at_threshold(
-    program="snap", threshold="gross_income_limit",
-    state="VA", household_size=3, offset_pct=0.0
+    program="snap", threshold="gross_income_limit", state="VA", household_size=3, offset_pct=0.0
 )
 ```
 
 ### Running a pipeline
 ```python
 from govsynth import Pipeline
+
 pipeline = Pipeline.from_preset("snap.va")
 cases = pipeline.generate(n=100, seed=42)
 pipeline.save(cases, "./output/", formats=["yaml", "jsonl"])

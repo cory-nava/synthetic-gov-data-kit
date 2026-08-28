@@ -124,7 +124,7 @@ class RationaleEvaluator:
     def score_batch(self, cases: list[TestCase], model_outputs: list[str]) -> list[RationaleScore]:
         """Score a batch of (case, output) pairs."""
         assert len(cases) == len(model_outputs), "cases and outputs must have same length"
-        return [self.score(c, o) for c, o in zip(cases, model_outputs, strict=False)]
+        return [self.score(c, o) for c, o in zip(cases, model_outputs, strict=True)]
 
     def summary_stats(self, scores: list[RationaleScore]) -> dict[str, Any]:
         """Compute aggregate stats over a list of scores."""

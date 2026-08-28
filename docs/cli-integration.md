@@ -70,10 +70,7 @@ mcp = FastMCP("govsynth")
 @mcp.tool()
 def list_presets() -> list[dict]:
     """List all available govsynth presets with descriptions."""
-    result = subprocess.run(
-        ["govsynth", "list-presets", "--json"],
-        capture_output=True, text=True, check=True
-    )
+    result = subprocess.run(["govsynth", "list-presets", "--json"], capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
 
 
@@ -97,14 +94,22 @@ def generate_cases(
 
     result = subprocess.run(
         [
-            "govsynth", "generate", preset,
-            "--n", str(n),
-            "--seed", str(seed),
-            "--profile-strategy", profile_strategy,
-            "--format", "jsonl",
+            "govsynth",
+            "generate",
+            preset,
+            "--n",
+            str(n),
+            "--seed",
+            str(seed),
+            "--profile-strategy",
+            profile_strategy,
+            "--format",
+            "jsonl",
             "--quiet",
         ],
-        capture_output=True, text=True, check=True
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
@@ -134,10 +139,7 @@ def validate_case_file(yaml_content: str) -> dict:
         f.write(yaml_content)
         tmp_path = f.name
 
-    result = subprocess.run(
-        ["govsynth", "validate", tmp_path, "--json"],
-        capture_output=True, text=True
-    )
+    result = subprocess.run(["govsynth", "validate", tmp_path, "--json"], capture_output=True, text=True)
     Path(tmp_path).unlink(missing_ok=True)
     return {"valid": result.returncode == 0, "output": result.stdout}
 
@@ -202,10 +204,7 @@ from typing import Any
 
 def list_presets() -> list[dict[str, Any]]:
     """Return all registered presets as a list of dicts."""
-    result = subprocess.run(
-        ["govsynth", "list-presets", "--json"],
-        capture_output=True, text=True, check=True
-    )
+    result = subprocess.run(["govsynth", "list-presets", "--json"], capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
 
 
@@ -219,14 +218,22 @@ def generate(
     """Generate n cases for the given preset, returning parsed dicts."""
     result = subprocess.run(
         [
-            "govsynth", "generate", preset,
-            "--n", str(n),
-            "--seed", str(seed),
-            "--profile-strategy", profile_strategy,
-            "--format", fmt,
+            "govsynth",
+            "generate",
+            preset,
+            "--n",
+            str(n),
+            "--seed",
+            str(seed),
+            "--profile-strategy",
+            profile_strategy,
+            "--format",
+            fmt,
             "--quiet",
         ],
-        capture_output=True, text=True, check=True
+        capture_output=True,
+        text=True,
+        check=True,
     )
     if fmt == "jsonl":
         return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
@@ -260,21 +267,20 @@ def run_eval(preset: str, n: int = 20, seed: int = 42) -> dict:
         response = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": f"{case['scenario']['summary']}\n\n{case['task']['instruction']}"
-            }]
+            messages=[{"role": "user", "content": f"{case['scenario']['summary']}\n\n{case['task']['instruction']}"}],
         )
         answer = response.content[0].text
         expected = case["expected_outcome"]
 
         # Simple exact-match check; use RationaleEvaluator for deeper scoring
         correct = expected.lower() in answer.lower()
-        results.append({
-            "case_id": case["case_id"],
-            "expected": expected,
-            "correct": correct,
-        })
+        results.append(
+            {
+                "case_id": case["case_id"],
+                "expected": expected,
+                "correct": correct,
+            }
+        )
 
     accuracy = sum(r["correct"] for r in results) / len(results)
     return {"accuracy": accuracy, "n": len(results), "results": results}
@@ -339,23 +345,34 @@ TOOLS = [
 def handle_tool_call(name: str, inputs: dict) -> str:
     if name == "generate_test_cases":
         cmd = [
-            "govsynth", "generate", inputs["preset"],
-            "--n", str(inputs.get("n", 5)),
-            "--seed", str(inputs.get("seed", 42)),
-            "--profile-strategy", inputs.get("profile_strategy", "edge_saturated"),
-            "--format", "jsonl",
+            "govsynth",
+            "generate",
+            inputs["preset"],
+            "--n",
+            str(inputs.get("n", 5)),
+            "--seed",
+            str(inputs.get("seed", 42)),
+            "--profile-strategy",
+            inputs.get("profile_strategy", "edge_saturated"),
+            "--format",
+            "jsonl",
             "--quiet",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         cases = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
         # Return a compact summary so it fits in context
-        return json.dumps([{
-            "case_id": c["case_id"],
-            "outcome": c["expected_outcome"],
-            "difficulty": c["difficulty"],
-            "household_size": c["scenario"]["household_size"],
-            "monthly_gross_income": c["scenario"]["monthly_gross_income"],
-        } for c in cases])
+        return json.dumps(
+            [
+                {
+                    "case_id": c["case_id"],
+                    "outcome": c["expected_outcome"],
+                    "difficulty": c["difficulty"],
+                    "household_size": c["scenario"]["household_size"],
+                    "monthly_gross_income": c["scenario"]["monthly_gross_income"],
+                }
+                for c in cases
+            ]
+        )
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -378,20 +395,20 @@ def run_agentic_loop(user_message: str) -> str:
         for block in response.content:
             if block.type == "tool_use":
                 result = handle_tool_call(block.name, block.input)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    }
+                )
 
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})
 
 
 # Example usage
-answer = run_agentic_loop(
-    "Generate 5 SNAP Virginia test cases and summarize what makes the hard ones difficult."
-)
+answer = run_agentic_loop("Generate 5 SNAP Virginia test cases and summarize what makes the hard ones difficult.")
 print(answer)
 ```
 

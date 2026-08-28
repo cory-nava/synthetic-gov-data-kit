@@ -8,6 +8,9 @@
     "fpl_basis_year": 2025,
     "source": "USDA FNS SNAP FY2026 Cost-of-Living Adjustments Memo (August 13, 2025)",
     "source_url": "https://www.fns.usda.gov/snap/allotment/cola/fy26",
+    "source_url_max_allotments_pdf": "https://fns-prod.azureedge.us/sites/default/files/resource-files/snap-fy26maximumAllotments-deductions.pdf",
+    "source_url_full_memo_state_mirror": "https://health.alaska.gov/media/4nunu3ob/fy2026-cola-memo.pdf",
+    "source_url_full_memo_state_mirror_note": "State-agency-hosted mirror of the signed 7-page USDA FNS memo (income standards on p.3); the usda.gov original returns 403 to automated fetches.",
     "cfr_reference": "7 CFR 273.9",
     "verification_status": "verified",
     "verification_note": "Values taken directly from official USDA FNS SNAP COLA FY2026 memo signed by Ronald Ward, Acting Associate Administrator, dated August 13, 2025. Effective October 1, 2025 through September 30, 2026."
@@ -50,6 +53,28 @@
     "8": { "gross_monthly": 6750, "net_monthly": 5192, "max_benefit": 3040 },
     "each_additional": { "gross_monthly": 686, "net_monthly": 528, "max_benefit": 371 }
   },
+  "households_guam": {
+    "1": { "gross_monthly": 1696, "net_monthly": 1305, "max_benefit": 439 },
+    "2": { "gross_monthly": 2292, "net_monthly": 1763, "max_benefit": 806 },
+    "3": { "gross_monthly": 2888, "net_monthly": 2221, "max_benefit": 1157 },
+    "4": { "gross_monthly": 3483, "net_monthly": 2680, "max_benefit": 1465 },
+    "5": { "gross_monthly": 4079, "net_monthly": 3138, "max_benefit": 1743 },
+    "6": { "gross_monthly": 4675, "net_monthly": 3596, "max_benefit": 2095 },
+    "7": { "gross_monthly": 5271, "net_monthly": 4055, "max_benefit": 2315 },
+    "8": { "gross_monthly": 5867, "net_monthly": 4513, "max_benefit": 2637 },
+    "each_additional": { "gross_monthly": 596, "net_monthly": 459, "max_benefit": 322 }
+  },
+  "households_virgin_islands": {
+    "1": { "gross_monthly": 1696, "net_monthly": 1305, "max_benefit": 383 },
+    "2": { "gross_monthly": 2292, "net_monthly": 1763, "max_benefit": 703 },
+    "3": { "gross_monthly": 2888, "net_monthly": 2221, "max_benefit": 1009 },
+    "4": { "gross_monthly": 3483, "net_monthly": 2680, "max_benefit": 1278 },
+    "5": { "gross_monthly": 4079, "net_monthly": 3138, "max_benefit": 1521 },
+    "6": { "gross_monthly": 4675, "net_monthly": 3596, "max_benefit": 1827 },
+    "7": { "gross_monthly": 5271, "net_monthly": 4055, "max_benefit": 2019 },
+    "8": { "gross_monthly": 5867, "net_monthly": 4513, "max_benefit": 2300 },
+    "each_additional": { "gross_monthly": 596, "net_monthly": 459, "max_benefit": 281 }
+  },
   "standard_deductions_48_states_dc": {
     "1": 209, "2": 209, "3": 209, "4": 223, "5": 261, "6+": 299
   },
@@ -59,11 +84,23 @@
   "standard_deductions_hawaii": {
     "1": 295, "2": 295, "3": 295, "4": 295, "5": 300, "6+": 344
   },
+  "standard_deductions_guam": {
+    "1": 420, "2": 420, "3": 420, "4": 445, "5": 522, "6+": 598
+  },
+  "standard_deductions_virgin_islands": {
+    "1": 184, "2": 184, "3": 185, "4": 223, "5": 261, "6+": 299
+  },
   "excess_shelter_deduction_cap_48_states_dc": 744,
   "excess_shelter_deduction_cap_alaska": 1189,
   "excess_shelter_deduction_cap_hawaii": 1003,
+  "excess_shelter_deduction_cap_guam": 873,
+  "excess_shelter_deduction_cap_virgin_islands": 586,
   "homeless_shelter_deduction": 198.99,
   "minimum_benefit_48_states_dc": 24,
+  "minimum_benefit_alaska": 31,
+  "minimum_benefit_hawaii": 41,
+  "minimum_benefit_guam": 35,
+  "minimum_benefit_virgin_islands": 31,
   "gross_income_165pct_households_48_states_dc": {
     "1": 2152, "2": 2909, "3": 3665, "4": 4421, "5": 5177, "6": 5934, "7": 6690, "8": 7446,
     "each_additional": 757
@@ -76,6 +113,9 @@
     "Excess shelter cap increased to $744 (48 states + DC).",
     "Homeless shelter deduction increased to $198.99.",
     "The One Big Beautiful Bill Act of 2025 changed certain SNAP work requirements and non-citizen eligibility — check FNS for latest guidance on those provisions.",
-    "165% gross income standard applies to elderly/disabled households that are a separate household unit."
+    "165% gross income standard applies to elderly/disabled households that are a separate household unit.",
+    "Added households_guam, households_virgin_islands, standard_deductions_guam, standard_deductions_virgin_islands, excess_shelter_deduction_cap_guam ($873), and excess_shelter_deduction_cap_virgin_islands ($586) — all transcribed from the same signed FY2026 COLA memo (max allotments p.4, standard deductions and shelter caps p.6). Guam and the U.S. Virgin Islands previously fell back to the 48-states-and-DC tables, which understated their allotments and deductions.",
+    "GU and VI intentionally have no households_* gross/net override: the memo's 100%/130%/165% poverty-percentage income tables print one shared column headed '48 States, D.C., Guam, Virgin Islands' (p.3), so households_guam/households_virgin_islands copy gross_monthly/net_monthly from households_48_states_dc verbatim and only max_benefit differs. gross_income_165pct_households_48_states_dc likewise needs no guam/virgin_islands counterpart.",
+    "Added minimum_benefit_alaska ($31), minimum_benefit_hawaii ($41), minimum_benefit_guam ($35), and minimum_benefit_virgin_islands ($31) (memo p.5, 1-2 person households). Fixes a pre-existing defect: govsynth previously had only minimum_benefit_48_states_dc and applied that single $24 floor to every region, including Alaska and Hawaii, which have always had higher minimums. Alaska has three allotment tiers (Urban $31 / Rural 1 $39 / Rural 2 $48); minimum_benefit_alaska uses the Urban figure to match the Urban default govsynth already uses for Alaska's max allotment (see max_benefit_urban fallback in govsynth/sources/us/snap.py)."
   ]
 }

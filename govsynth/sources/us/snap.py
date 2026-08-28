@@ -17,64 +17,11 @@ from functools import lru_cache
 from govsynth.fiscal_year import DEFAULT_SNAP_FY, FiscalYearConfig
 from govsynth.sources.base import DataSource, HouseholdThreshold, ProgramThresholds
 
-# States with broad-based categorical eligibility (BBCE) — no/relaxed asset test.
-# Source: USDA FNS State Options Report, FY2025 (updated periodically)
-BBCE_STATES: set[str] = {
-    "AK",
-    "CA",
-    "CO",
-    "CT",
-    "DC",
-    "DE",
-    "FL",
-    "GA",
-    "HI",
-    "IL",
-    "IN",
-    "KY",
-    "LA",
-    "ME",
-    "MD",
-    "MA",
-    "MI",
-    "MN",
-    "MT",
-    "NE",
-    "NV",
-    "NH",
-    "NJ",
-    "NM",
-    "NY",
-    "NC",
-    "ND",
-    "OH",
-    "OR",
-    "PA",
-    "RI",
-    "SC",
-    "TN",
-    "UT",
-    "VT",
-    "VA",
-    "WA",
-    "WI",
-    "WY",
-}
-
-# States that maintain the strict federal asset test
-STRICT_ASSET_TEST_STATES: set[str] = {
-    "TX",
-    "MO",
-    "SD",
-    "WV",
-    "KS",
-    "AZ",
-    "MS",
-    "AL",
-    "AR",
-    "ID",
-    "OK",
-}
+# Broad-based categorical eligibility (BBCE) is modeled by SNAPBBCESource
+# (govsynth/sources/us/snap_bbce.py), driven by the per-state data table in
+# data/thresholds/snap_bbce_*.json. SNAPSource itself models only the federal
+# baseline (130% FPL gross, 100% FPL net, $3,000/$4,500 asset limits). A derived,
+# data-backed `BBCE_STATES` set is available from snap_bbce for callers that need it.
 
 # Alaska regions for allotment purposes
 ALASKA_RURAL1 = {
@@ -94,17 +41,34 @@ def get_standard_deduction(household_size: int, region: str = "48_states_dc") ->
     """Return the FY2026 standard deduction for a given household size and region.
 
     Source: USDA FNS SNAP COLA FY2026 Memo, p.6.
+
+    Raises ValueError for a region not in `tables` and KeyError for a household
+    size the region's table has no entry for. This function used to silently
+    fall back to the 48-states-and-DC table for any unrecognized region (via
+    `tables.get(region, tables["48_states_dc"])`) and to 209 for any unrecognized
+    size (via `t.get(..., 209)`) -- exactly the failure mode that, before this
+    fiscal year's data was added, made Guam and the U.S. Virgin Islands
+    silently receive the wrong standard deduction with no test able to catch
+    it. If a future region is added to `_region_for_state` without a matching
+    entry here, it must fail loudly instead of quietly regressing the same way.
     """
     tables = {
         "48_states_dc": {1: 209, 2: 209, 3: 209, 4: 223, 5: 261},
         "alaska": {1: 358, 2: 358, 3: 358, 4: 358, 5: 358},
         "hawaii": {1: 295, 2: 295, 3: 295, 4: 295, 5: 300},
+        "guam": {1: 420, 2: 420, 3: 420, 4: 445, 5: 522},
+        "virgin_islands": {1: 184, 2: 184, 3: 185, 4: 223, 5: 261},
     }
-    six_plus = {"48_states_dc": 299, "alaska": 374, "hawaii": 344}
-    t = tables.get(region, tables["48_states_dc"])
+    six_plus = {"48_states_dc": 299, "alaska": 374, "hawaii": 344, "guam": 598, "virgin_islands": 299}
+    if region not in tables:
+        raise ValueError(f"get_standard_deduction: unrecognized region {region!r}; known regions: {sorted(tables)}")
     if household_size >= 6:
-        return float(six_plus.get(region, 299))
-    return float(t.get(min(household_size, 5), 209))
+        return float(six_plus[region])
+    key = min(household_size, 5)
+    t = tables[region]
+    if key not in t:
+        raise KeyError(f"get_standard_deduction: region {region!r} has no entry for household size {key}")
+    return float(t[key])
 
 
 def _region_for_state(state: str) -> str:
@@ -112,6 +76,10 @@ def _region_for_state(state: str) -> str:
         return "alaska"
     if state == "HI":
         return "hawaii"
+    if state == "GU":
+        return "guam"
+    if state == "VI":
+        return "virgin_islands"
     return "48_states_dc"
 
 
@@ -152,16 +120,21 @@ class SNAPSource(DataSource):
                 max_benefit=float(max_b),
             )
 
-        # Asset limits — may be waived for BBCE states
-        if self.state != "national" and self.state in BBCE_STATES:
-            asset_limit: float | None = None  # BBCE waives the asset test
-        else:
-            asset_limit = float(raw["asset_limit_general"])
+        # Federal baseline asset limit. BBCE waivers/caps are applied by SNAPBBCESource.
+        asset_limit: float | None = float(raw["asset_limit_general"])
 
         std_deductions = {size: get_standard_deduction(size, self._region) for size in range(1, 9)}
 
         shelter_key = f"excess_shelter_deduction_cap_{self._region}"
         shelter_cap = float(raw.get(shelter_key, raw.get("excess_shelter_deduction_cap_48_states_dc", 744)))
+
+        # Minimum benefit resolves by region, same as the shelter cap above. Alaska has
+        # three allotment tiers (Urban/Rural 1/Rural 2); this kit models a single Alaska
+        # region and already defaults its *max* allotment to the Urban tier (see
+        # `max_benefit_urban` fallback above), so `minimum_benefit_alaska` is the Urban
+        # figure too, for consistency with that existing default rather than a new choice.
+        minimum_benefit_key = f"minimum_benefit_{self._region}"
+        minimum_benefit = float(raw.get(minimum_benefit_key, raw.get("minimum_benefit_48_states_dc", 24)))
 
         return ProgramThresholds(
             program="snap",
@@ -175,11 +148,9 @@ class SNAPSource(DataSource):
             earned_income_deduction_pct=float(raw["earned_income_deduction_pct"]),
             standard_deductions=std_deductions,
             extra={
-                "bbce_state": self.state in BBCE_STATES,
-                "strict_asset_test": self.state in STRICT_ASSET_TEST_STATES,
                 "excess_shelter_cap": shelter_cap,
                 "homeless_shelter_deduction": float(raw["homeless_shelter_deduction"]),
-                "minimum_benefit": float(raw.get("minimum_benefit_48_states_dc", 24)),
+                "minimum_benefit": minimum_benefit,
                 "cfr_reference": raw["_metadata"]["cfr_reference"],
                 "region": self._region,
                 "verification_status": raw["_metadata"]["verification_status"],
@@ -189,11 +160,8 @@ class SNAPSource(DataSource):
     def fetch_policy_summary(self) -> str:
         t = self.thresholds()
         assert t.extra is not None, "SNAP thresholds always populate `extra`"
-        bbce = t.extra and t.extra.get("bbce_state", False)
         asset_note = (
-            f"No asset test ({self.state} has broad-based categorical eligibility)."
-            if bbce
-            else f"Asset limits: ${t.asset_limit_general:,.0f} general, "
+            f"Asset limits: ${t.asset_limit_general:,.0f} general, "
             f"${t.asset_limit_elderly_disabled:,.0f} elderly/disabled (60+ or disabled)."
         )
         return (

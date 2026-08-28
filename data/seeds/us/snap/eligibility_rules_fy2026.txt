@@ -64,17 +64,33 @@ ASSET LIMITS (FY2026, UNCHANGED from FY2025):
   Excluded assets include: home, vehicle (one), retirement accounts,
   SNAP benefits, most IRA/pension funds.
 
-BROAD-BASED CATEGORICAL ELIGIBILITY (BBCE):
-  Many states have adopted BBCE, which removes or raises the asset test.
-  In BBCE states, households receiving (or deemed to receive) TANF-funded
-  services are categorically eligible. Most BBCE states remove the asset
-  test entirely for most households.
+BROAD-BASED CATEGORICAL ELIGIBILITY (BBCE) (7 CFR 273.2(j)(2)(ii)):
+  A household becomes categorically eligible by receiving a NON-CASH
+  TANF/MOE-funded benefit or service (e.g. an informational brochure,
+  referral, or 1-800 number) — not cash assistance. Adopting BBCE lets a
+  state do TWO things:
+    1. RAISE THE GROSS INCOME LIMIT from the federal 130% FPL up to the
+       statutory ceiling of 200% FPL. States choose a value in that range;
+       common limits are 130%, 165%, 185%, and 200% FPL. (A household at,
+       e.g., 160% FPL in a 200%-limit state is eligible even though it would
+       fail the federal 130% gross test.)
+    2. ELIMINATE OR RAISE THE ASSET TEST. Most BBCE states waive the asset
+       test entirely; a few keep a higher liquid-asset cap ($5,000-$25,000).
+  IMPORTANT: BBCE raises the GROSS limit but does NOT waive the NET income
+  test — the household must still have net income at or below 100% FPL to
+  receive a benefit (1-2 person categorically eligible households receive at
+  least the minimum benefit). As of August 2025, 46 jurisdictions had adopted
+  BBCE; the non-BBCE states are KS, MS, MO, SD, TN, UT, WY.
+  Source: USDA FNS SNAP BBCE States Chart (August 2025).
 
 === CATEGORICAL ELIGIBILITY ===
 
-Households in which ALL members receive SSI, TANF, or certain GA programs
-are categorically eligible for SNAP without separate income/asset testing.
-BBCE extends this to households receiving TANF-funded services.
+Households in which ALL members receive SSI, TANF, or certain GA programs are
+"traditionally" categorically eligible for SNAP without separate income/asset
+testing (7 CFR 273.2(j)(2), 273.11(c)). BROAD-BASED categorical eligibility
+(above) extends a more limited form to households receiving non-cash
+TANF/MOE-funded services: it raises the gross limit and waives/raises assets,
+but the net income test still applies.
 
 === BENEFIT CALCULATION ===
 
