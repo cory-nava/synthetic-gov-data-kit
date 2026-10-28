@@ -166,6 +166,7 @@ class SNAPEligibilityGenerator(Generator):
         special_fraction: float = 0.20,
         phrasing_style: str | None = None,
         scenario_phrasing_style: str | None = None,
+        builder_weights: dict[str, float] | None = None,
     ) -> list[TestCase]:
         """Generate n SNAP eligibility test cases.
 
@@ -192,6 +193,13 @@ class SNAPEligibilityGenerator(Generator):
             case in a randomly chosen style (deterministic per case seed/index).
             All styles ask the same underlying eligibility question but from
             different angles/registers to support semantic variation for RLVR training.
+
+        builder_weights: Optional dict mapping special-population builder names to
+            weights for weighted random selection. Keys should match builder names
+            (e.g., "homeless_case", "student_case"). Values are summed and normalized,
+            so they need not be probabilities (can be any positive numbers). If None,
+            builders are selected uniformly at random (default). Only used when
+            profile_strategy is 'edge_saturated'.
 
         When profile_strategy is 'edge_saturated', 20% of cases (minimum 1 per special
         type if n >= 6) are special-population edge cases. The remainder use threshold-boundary
@@ -244,7 +252,7 @@ class SNAPEligibilityGenerator(Generator):
         n_special = max(n_special, min(len(self._available_special_population_builders()), n))
         n_edge = n - n_special
 
-        special_cases = self._build_special_population_cases(n_special, rng)
+        special_cases = self._build_special_population_cases(n_special, rng, builder_weights=builder_weights)
 
         edge_cases: list[TestCase] = []
         for i in range(n_edge):
@@ -414,21 +422,61 @@ class SNAPEligibilityGenerator(Generator):
                 hi = mid
         return lo
 
-    def _build_special_population_cases(self, n: int, rng: random.Random) -> list[TestCase]:
-        """Build n special-population edge cases, cycling through the available types.
+    def _build_special_population_cases(
+        self, n: int, rng: random.Random, builder_weights: dict[str, float] | None = None
+    ) -> list[TestCase]:
+        """Build n special-population edge cases with optional weighted builder selection.
 
-        When n is below the number of available types, cycles through the first n.
-        When n is at or above it, guarantees at least one case per available type.
+        When builder_weights is None (default): cycles through available types to guarantee
+        at least one case per available type when n >= number of types.
+
+        When builder_weights is provided: selects builders using weighted random selection
+        based on the supplied weights dict. Keys should match builder names (e.g., "homeless_case").
+        Values are normalized before use.
         """
         builders = self._available_special_population_builders()
         cases: list[TestCase] = []
-        for i in range(n):
-            name, builder = builders[i % len(builders)]
-            try:
-                case = builder(rng)
-                cases.append(case)
-            except Exception as exc:
-                raise RuntimeError(f"special-case builder {name!r} failed while building case {i}: {exc}") from exc
+
+        if builder_weights is None:
+            # Original behavior: cycle through builders
+            for i in range(n):
+                name, builder = builders[i % len(builders)]
+                try:
+                    case = builder(rng)
+                    cases.append(case)
+                except Exception as exc:
+                    raise RuntimeError(f"special-case builder {name!r} failed while building case {i}: {exc}") from exc
+        else:
+            # Weighted random selection
+            # Map builder names to indices and functions
+            builder_dict = {name: (idx, func) for idx, (name, func) in enumerate(builders)}
+            builder_names = [name for name, _ in builders]
+
+            # Extract and normalize weights for available builders
+            weights = []
+            for name in builder_names:
+                weight = builder_weights.get(name, 1.0)  # Default to 1.0 if not specified
+                weights.append(weight)
+
+            # Normalize weights
+            total_weight = sum(weights)
+            if total_weight <= 0:
+                # All weights zero or empty; fall back to uniform
+                weights = [1.0] * len(builder_names)
+                total_weight = float(len(builder_names))
+
+            normalized_weights = [w / total_weight for w in weights]
+
+            # Generate cases with weighted builder selection
+            for i in range(n):
+                name = rng.choices(builder_names, weights=normalized_weights, k=1)[0]
+                _, builder = builder_dict[name]
+                try:
+                    case = builder(rng)
+                    cases.append(case)
+                except Exception as exc:
+                    raise RuntimeError(f"special-case builder {name!r} failed while building case {i}: {exc}") from exc
+
         return cases
 
     def _build_homeless_case(self, rng: random.Random) -> TestCase:
